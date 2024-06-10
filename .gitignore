@@ -18,7 +18,13 @@
 /tests/dynlib
 /tests/dynlib.exe
 /tests/not_bc
-
+/tests/class2
+/tests/inline_c.exe
+/tests/objc
+/tests/objc2
+/tests/stdio.exe
+/cmake-build-debug/
+/.idea/
 *.bc
 *.ll
 *.o
