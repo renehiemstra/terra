@@ -3434,9 +3434,10 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
                 else
                     ensurelvalue(v)
                     --if 'v' is a managed variable then
-                    --(1) var tmp = v       --store v in tmp
-                    --(2) v = rhs[i]        --perform assignment
-                    --(3) tmp:__dtor()      --delete old v
+                    --(1) var tmp = rhs[i]  --assign rhs to temporary variable
+                    --(2) v:__dtor()        --delete old resources
+                    --(3) v = tmp           --perform assignment
+                    --(4) tmp:__init()      --reset tmp
                     --the temporary is necessary because rhs[i] may involve a function of 'v'
                     if hasmetamethod(v, "__dtor") then
                         --To avoid unwanted deletions we prohibit assignments that may involve something
@@ -3445,11 +3446,15 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
                         if #regular.lhs>1 then
                             diag:reporterror(anchor, "assignments of managed objects is not supported for tuples.")
                         end
-                        local tmpa, tmp = allocvar(v, v.type,"<tmp>")
-                        --store v in tmp
-                        stmts:insert(newobject(anchor,T.assignment, List{tmpa}, List{v}))
-                        --call tmp:__dtor()
-                        post:insert(checkmetadtor(anchor, tmp))
+                        local tmpa, tmp = allocvar(regular.rhs[i], rhstype,"<tmp>")
+                        --(1) evaluate rhs[i] and store in tmp
+                        stmts:insert(newobject(anchor,T.assignment, List{tmpa}, List{regular.rhs[i]}))
+                        --(2) call v:__dtor()
+                        stmts:insert(checkmetadtor(anchor, v))
+                        --(3) set new rhs to tmp (assignment is performed later)
+                        regular.rhs[i] = tmp
+                        --(4) as post statement call tmp:__init()
+                        post:insert(checkmetainit(anchor, tmp))
                     end
                 end
             end
@@ -3783,11 +3788,11 @@ function terra.includecstring(code,cargs,target)
     	args:insert(path)
     end
     -- Obey the SDKROOT variable on macOS to match Clang behavior.
-    local sdkroot = os.getenv("SDKROOT")
-    if sdkroot then
-      args:insert("-isysroot")
-      args:insert(sdkroot)
-    end
+    --local sdkroot = os.getenv("SDKROOT")
+    --if sdkroot then
+    --  args:insert("-isysroot")
+    --  args:insert(sdkroot)
+    --end
     -- Set GNU C version to match value set by Clang: https://github.com/llvm/llvm-project/blob/f77c948d56b09b839262e258af5c6ad701e5b168/clang/lib/Driver/ToolChains/Clang.cpp#L5750-L5753
     if ffi.os ~= "Windows" and terralib.llvm_version >= 100 then
       args:insert("-fgnuc-version=4.2.1")
