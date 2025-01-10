@@ -294,9 +294,15 @@ terra.environment.__index = terra.environment
 
 function terra.environment:enterblock()
     local e = {}
+    for k,v in pairs(self._localenv or e) do
+        self._cumulenv[k] = v
+    end
     self._localenv = setmetatable(e,{ __index = self._localenv })
 end
 function terra.environment:leaveblock()
+    for k,v in pairs(self._localenv) do
+        self._cumulenv[k] = nil
+    end
     self._localenv = getmetatable(self._localenv).__index
 end
 function terra.environment:localenv()
@@ -307,6 +313,9 @@ function terra.environment:luaenv()
 end
 function terra.environment:combinedenv()
     return self._combinedenv
+end
+function terra.environment:cumulenv()
+    return self._cumulenv
 end
 
 function terra.newenvironment(_luaenv)
@@ -320,6 +329,7 @@ function terra.newenvironment(_luaenv)
             error("cannot define global variables or assign to upvalues in an escape")
         end;
     })
+    self._cumulenv = {}
     self:enterblock()
     return self
 end
@@ -2844,15 +2854,32 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
         local rsyms = rstat and extractreturnedsymbols() or {}
         --get position at which to add destructor statements
         local pos = rstat and #stats or #stats+1
-        for name,sym in pairs(env:localenv()) do
-            --if not a return variable, then check for an implementation of methods.__dtor
+        --place destructor calls for variables that are not returned
+        local function placedestructorcall(name, sym)
             if not rsyms[name] then
+                --if not a return variable, then check for an implementation of methods.__dtor
                 local reciever = newobject(anchor,T.var, name, sym):setlvalue(true):withtype(sym.type)
                 local dtor = checkraiimethodwithreceiver(anchor, reciever, "__dtor")
                 if dtor then
                     --add deferred calls to the destructors
                     table.insert(stats, pos, newobject(anchor, T.defer, dtor))
                     pos = pos + 1
+                end
+            end
+        end
+        --first add destructor calls for variables local to current scope
+        local t = {}
+        for name,sym in pairs(env:localenv()) do
+            t[name] = sym
+            placedestructorcall(name, sym)
+        end
+        --add destructor calls for variables from outer scopes in case this scope
+        --has a return statement
+        if rstat then
+            for name, sym in pairs(env:cumulenv()) do
+                local mylocalvar = t[name]
+                if not mylocalvar then
+                    placedestructorcall(name, sym)
                 end
             end
         end
@@ -3802,11 +3829,11 @@ function terra.includecstring(code,cargs,target)
     	args:insert(path)
     end
     -- Obey the SDKROOT variable on macOS to match Clang behavior.
-    local sdkroot = os.getenv("SDKROOT")
-    if sdkroot then
-      args:insert("-isysroot")
-      args:insert(sdkroot)
-    end
+    --local sdkroot = os.getenv("SDKROOT")
+    --if sdkroot then
+    --  args:insert("-isysroot")
+    --  args:insert(sdkroot)
+    --end
     -- Set GNU C version to match value set by Clang: https://github.com/llvm/llvm-project/blob/f77c948d56b09b839262e258af5c6ad701e5b168/clang/lib/Driver/ToolChains/Clang.cpp#L5750-L5753
     if ffi.os ~= "Windows" and terralib.llvm_version >= 100 then
       args:insert("-fgnuc-version=4.2.1")
