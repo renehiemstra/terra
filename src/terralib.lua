@@ -2833,7 +2833,7 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
             local n = #stats
             if n>0 then
                 local s = stats[n]
-                if s:is "returnstat" then
+                if s:is "returnstat" or s:is "breakstat" then
                     return s
                 end
             end
@@ -2851,7 +2851,7 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
             return ret
         end
         --get symbols that are returned in case of a return statement
-        local rsyms = rstat and extractreturnedsymbols() or {}
+        local rsyms = rstat and rstat:is "returnstat" and extractreturnedsymbols() or {}
         --get position at which to add destructor statements
         local pos = rstat and #stats or #stats+1
         --place destructor calls for variables that are not returned
@@ -2874,13 +2874,25 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
             placedestructorcall(name, sym)
         end
         --add destructor calls for variables from outer scopes in case this scope
-        --has a return statement
+        --has a return or break statement
         if rstat then
-            for name, sym in pairs(env:cumulenv()) do
-                local mylocalvar = t[name]
-                if not mylocalvar then
+            if rstat:is "returnstat" then
+                for name, sym in pairs(env:cumulenv()) do
+                    local mylocalvar = t[name] --we've already cleaned everything in table 't'. so only continue if 'sym'
+                    --with 'name' is not in 't'
+                    if not mylocalvar then
+                        placedestructorcall(name, sym)
+                    end
+                end
+            elseif rstat:is "breakstat" then
+                --we've already cleaned up the managed variables corresponding to the current scope.
+                --now we still need to clean up the managed variables of the outer scope, which is
+                --the loop that we leave using the 'break' statement.
+                env:leaveblock()
+                for name, sym in pairs(env:localenv()) do
                     placedestructorcall(name, sym)
                 end
+                env:enterblock()
             end
         end
         return stats

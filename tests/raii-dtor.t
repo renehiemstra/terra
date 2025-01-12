@@ -115,3 +115,41 @@ printtestheader("raii-dtor.t - testing __dtor nested scopes - while-loop -branch
 --exit through through outer-most scope after finishing while-loop
 test.eq(main2(5), 4) --z.data = 6, increased in while-loop until 10, exit loop and exit main2
 test.eq(getndestructorcalls(), 5) --__dtor is called 4 times in while-loop and once in main2
+
+
+--test nested scopes and proper destructor calls after break statement
+terra main3(v : int)
+    ndestructorcalls = 0
+    var a : A
+    --a:__init()
+    a = v -- replaced by: A.methods.__copy(&v, &a) -- a.data = 1 + v
+    while true do
+        var b : A --b is not released the second time
+        --b:__init()
+        if a.data > 2 then
+            var d : A
+            --d:__init()
+            var e : A
+            --d:__init()
+            --defer d:__dtor()
+            --defer d:__dtor()
+            --defer b:__dtor()
+            break
+        end
+        var c : A
+        --c:__init()
+        --defer b:__dtor()
+        --defer c:__dtor()
+        a.data = a.data + 1
+    end
+    --defer a:__dtor()
+    return getndestructorcalls()
+end
+
+printtestheader("raii-dtor.t - testing __dtor nested scopes with 'break'")
+
+test.eq(main3(0), 7)
+test.eq(getndestructorcalls(), 8)
+
+test.eq(main3(1), 5)
+test.eq(getndestructorcalls(), 6)
