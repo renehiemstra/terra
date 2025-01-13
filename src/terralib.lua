@@ -3021,6 +3021,29 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
         end
 
         local function createcall(callee, paramlist)
+            local function injectcopyassignment(i, p)
+                local stmts = List()
+                --allocate temporary
+                local lv,l = allocvar(p, p.type, "<tmp>")
+                stmts:insert(lv)
+                --insert __init for temporary
+                local init = checkraiimethodwithreceiver(p, l, "__init")
+                if init then
+                    stmts:insert(init)
+                end
+                --insert __copy for temporary
+                stmts:insert(checkraiicopyassignment(p, p, l))
+                --reset parameter input as the temporary object that is initialized using
+                --the copy-assignment
+                paramlist[i] = createlet(p, stmts, List{l}, true)
+            end
+            --inject copy-assignment for all managed variables that are passed by value
+            for i, p in ipairs(paramlist) do
+                if ismanaged(p, "__copy") then
+                    injectcopyassignment(i, p)
+                end
+            end
+            --create actual call with this parameterlist
             callee.type.type:tcompletefunction(anchor)
             return newobject(anchor,T.apply,callee,paramlist):withtype(callee.type.type.returntype)
         end

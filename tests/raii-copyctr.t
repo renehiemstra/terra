@@ -10,6 +10,14 @@ require "terralibext"  --load 'terralibext' to enable raii
     should be performed using this method.
 --]]
 
+local function printtestheader(s)
+    print()
+    print("===========================")
+    print(s)
+    print("===========================")
+end
+
+
 local test = require("test")
 io = terralib.includec("stdio.h")
 
@@ -29,17 +37,20 @@ end
 
 A.methods.__copy = terra(from : &A, to : &A)
     io.printf("__copy: calling copy assignment {&A, &A} -> {}.\n")
-    to.data = to.data + from.data + 1
+    to.data = from.data + 1
 end
+
+printtestheader("raii-copyctr.t - copy-construction")
 
 terra test1()
     var a : A           --__init -> a.data = 1
-    var aa = a          --__init + __copy -> a.data = 3
+    var aa = a          --__init + __copy -> a.data = 2
     return aa.data
 end
+test.eq(test1(), 2)
 
--- aa.data = aa.data + a.data + 1 = 3
-test.eq(test1(), 3)
+
+printtestheader("raii-copyctr.t - copy-construction with generated __ctor")
 
 --since A is managed, an __init, __dtor, and __copy will
 --be generated
@@ -49,9 +60,23 @@ struct B{
 
 terra test2()
     var a : A           --__init -> a.data = 1
-    var b = B{a}        --__init + __copy -> b.data.data = 3
+    var b = B{a}        --__init + __copy -> b.data.data = 2
     return b.data.data
 end
+test.eq(test2(), 2)
 
--- b.data.data = b.data.data + a.data + 1 = 3
-test.eq(test2(), 3)
+
+printtestheader("raii-copyctr.t - copy-construction in passing parameters by value to function")
+
+--passing by value, so copy-assignment is performed on both 'a' and 'b'
+--increasing 'a.data' and 'b.data' by one
+terra myfun(a : A, b : A)
+    return a.data + b.data
+end
+
+terra test3()
+    var a : A --a.data = 1
+    var b : A --b.data = 1
+    return myfun(a, b) --copy-assignment is performed for 'a' and 'b', so myfun returns 4
+end
+test.eq(test3(), 4)

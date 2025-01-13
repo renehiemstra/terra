@@ -18,9 +18,15 @@ terra A:__init()
     self.data = 1
 end
 
-terra A.methods.__copy(from: &int, to: &A)
-    to.data = to.data + @from
-end
+A.methods.__copy = terralib.overloadedfunction("__copy",{
+    terra(from: &int, to: &A)
+        to.data = to.data + @from
+    end
+    ,
+    terra(from: &A, to: &A)
+        to.data = from.data
+    end
+})
 
 ndestructorcalls = global(int)
 
