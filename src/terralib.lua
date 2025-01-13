@@ -294,15 +294,9 @@ terra.environment.__index = terra.environment
 
 function terra.environment:enterblock()
     local e = {}
-    for k,v in pairs(self._localenv or e) do
-        self._cumulenv[k] = v
-    end
     self._localenv = setmetatable(e,{ __index = self._localenv })
 end
 function terra.environment:leaveblock()
-    for k,v in pairs(self._localenv) do
-        self._cumulenv[k] = nil
-    end
     self._localenv = getmetatable(self._localenv).__index
 end
 function terra.environment:localenv()
@@ -329,7 +323,6 @@ function terra.newenvironment(_luaenv)
             error("cannot define global variables or assign to upvalues in an escape")
         end;
     })
-    self._cumulenv = {}
     self:enterblock()
     return self
 end
@@ -2867,32 +2860,46 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
                 end
             end
         end
-        --first add destructor calls for variables local to current scope
-        local t = {}
-        for name,sym in pairs(env:localenv()) do
-            t[name] = sym
-            placedestructorcall(name, sym)
+        --add destructor calls for variables local to current scope
+        local function clearcurrentscope()
+            for name,sym in pairs(env:localenv()) do
+                placedestructorcall(name, sym)
+            end
         end
-        --add destructor calls for variables from outer scopes in case this scope
-        --has a return or break statement
+        --add destructor calls for variables from all outer scopes
+        local clearouterscopes
+        function clearouterscopes()
+            env:leaveblock()
+            if env:localenv() then
+                clearcurrentscope()
+                clearouterscopes()
+            end
+        end
+        --clear the current scope
+        clearcurrentscope()
+        --if a return or break statement clear remaining managed variables
         if rstat then
             if rstat:is "returnstat" then
-                for name, sym in pairs(env:cumulenv()) do
-                    local mylocalvar = t[name] --we've already cleaned everything in table 't'. so only continue if 'sym'
-                    --with 'name' is not in 't'
-                    if not mylocalvar then
-                        placedestructorcall(name, sym)
-                    end
-                end
+                --we've already cleaned up the managed variables corresponding to the current scope.
+                --if this is a return statement then clear all remaining managed variables from outer
+                --scopes before the return
+                local savedlocalenv = env._localenv
+                clearouterscopes()
+                --would have been nicer to use 'env:leaveblock()' followed by 'env:enterblock()' but
+                --unfortunately this has side effects once you go to scopedepth zero. so we just
+                --save the local environment and reset it now that we are done.
+                env._localenv = savedlocalenv
             elseif rstat:is "breakstat" then
                 --we've already cleaned up the managed variables corresponding to the current scope.
                 --now we still need to clean up the managed variables of the outer scope, which is
                 --the loop that we leave using the 'break' statement.
+                local savedlocalenv = env._localenv
                 env:leaveblock()
-                for name, sym in pairs(env:localenv()) do
-                    placedestructorcall(name, sym)
-                end
-                env:enterblock()
+                clearcurrentscope()
+                --would have been nicer to use 'env:leaveblock()' followed by 'env:enterblock()' but
+                --unfortunately this has side effects once you go to scopedepth zero. so we just
+                --save the local environment and reset it now that we are done.
+                env._localenv = savedlocalenv
             end
         end
         return stats
@@ -3841,11 +3848,11 @@ function terra.includecstring(code,cargs,target)
     	args:insert(path)
     end
     -- Obey the SDKROOT variable on macOS to match Clang behavior.
-    local sdkroot = os.getenv("SDKROOT")
-    if sdkroot then
-        args:insert("-isysroot")
-        args:insert(sdkroot)
-    end
+    --local sdkroot = os.getenv("SDKROOT")
+    --if sdkroot then
+    --    args:insert("-isysroot")
+    --    args:insert(sdkroot)
+    --end
     -- Set GNU C version to match value set by Clang: https://github.com/llvm/llvm-project/blob/f77c948d56b09b839262e258af5c6ad701e5b168/clang/lib/Driver/ToolChains/Clang.cpp#L5750-L5753
     if ffi.os ~= "Windows" and terralib.llvm_version >= 100 then
       args:insert("-fgnuc-version=4.2.1")
