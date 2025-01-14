@@ -3032,10 +3032,16 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
                     stmts:insert(init)
                 end
                 --insert __copy for temporary
-                stmts:insert(checkraiicopyassignment(p, p, l))
-                --reset parameter input as the temporary object that is initialized using
-                --the copy-assignment
-                paramlist[i] = createlet(p, stmts, List{l}, true)
+                local cp = checkraiicopyassignment(p, p, l)
+                --only update the parameter if a copy-assignment is implemented
+                --that maps 'from' onto 'to' of the same type. otherwise we perform
+                --a standard bitcopy. maybe we should raise an error here?
+                if cp then
+                    stmts:insert(cp)
+                    --reset parameter input as the temporary object that is initialized using
+                    --the copy-assignment
+                    paramlist[i] = createlet(p, stmts, List{l}, true)
+                end
             end
             --inject copy-assignment for all managed variables that are passed by value
             for i, p in ipairs(paramlist) do
