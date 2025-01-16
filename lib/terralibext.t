@@ -154,7 +154,7 @@ function addmissingmove(T)
                         --copying field-by-field. otherwise the copy-constructor
                         --may be called
                         for i,e in ipairs(T:getentries()) do
-                            emit quote runmove(from.[e.field], to.[e.field]) end
+                            emit quote to.[e.field] = from.[e.field] end
                         end
                     end
                     from:__init()   --re-initializing bits of 'from'

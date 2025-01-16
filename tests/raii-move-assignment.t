@@ -18,10 +18,6 @@ terra A:__init()
     self.data = 1
 end
 
-terra A.methods.__copy(from: &A, to: &A)
-    to.data = from.data + 1
-end
-
 terra A:__dtor()
     self.data = -1
 end
@@ -32,17 +28,38 @@ terra myfun(a : A, b : A)
     return a.data + b.data
 end
 
+printtestheader("raii-move-assignment.t - testing __copy set as default to __move")
+
+--__copy is not implemented, so __copy is generated and set as a generated __move
+terra main()
+    var a : A
+    a.data = 2
+    var b : A
+    b.data = 2
+    var s = myfun(a, b) --'a' is moved from, 'b' is moved from, --> s = 2 + 2
+    return s + a.data --'a' has been moved from, so its __init has been called --> a.data = 1
+end
+test.eq(main(), 5)
+
+
 printtestheader("raii-move-assignment.t - testing __copy when passing by value")
 
-terra main()
+terra A.methods.__copy(from: &A, to: &A)
+    to.data = from.data + 1
+end
+
+--__copy is implemented, so 'a' and 'b' will be consumed by 'myfun' using a __copy
+terra main1()
     var a : A --a.data = 1
     var b : A --b.data = 1
     return myfun(a, b) --copy-assignment is performed for 'a' and 'b', so myfun returns 4
 end
-test.eq(main(), 4)
+test.eq(main1(), 4)
+
 
 printtestheader("raii-move-assignment.t - testing __move when passing by value")
 
+--forcefully __move 'a'
 terra main2()
     var a : A
     a.data = 2  --a.data = 2
@@ -51,3 +68,24 @@ terra main2()
     return s + a.data --'a' has been moved from, so its __init has been called --> a.data = 1
 end
 test.eq(main2(), 5)
+
+
+printtestheader("raii-move-assignment.t - testing __copy assignment")
+
+terra main3()
+    var a : A
+    a.data = 3
+    var b = a --here we are calling __copy --> b.data = 4, a.data = 3
+    return a.data + b.data
+end
+test.eq(main3(), 7)
+
+printtestheader("raii-move-assignment.t - testing __move assignment")
+
+terra main4()
+    var a : A
+    a.data = 3
+    var b = __move__(a) --here we are calling the generated __move --> b.data = 3, a.data = 1
+    return a.data + b.data
+end
+test.eq(main1(), 4)

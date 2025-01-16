@@ -2971,10 +2971,10 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
         end
         --if `to` is an allocvar then set type and turn into corresponding `var`
         if to:is "allocvar" then
-            if not to.type then
-                to:settype(from.type or terra.types.error)
-            end
-            to = newobject(anchor,T.var,to.name,to.symbol):setlvalue(true):withtype(to.type)
+            to = newobject(anchor,T.var,to.name,to.symbol):setlvalue(true):withtype(from.type or terra.types.error)
+        end
+        if from:is "movevar" then
+            from = newobject(anchor,T.var,from.name,from.symbol):setlvalue(true):withtype(from.type or terra.types.error)
         end
         --list of overloaded __move metamethods
         local overloads = terra.newlist()
@@ -3003,9 +3003,7 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
         if exp.value.name == "__move__" then
             local arguments = checkexpressions(exp.arguments,"luavalue")
             local v = arguments[1]
-            local mv = newobject(exp, T.movevar, v.name, v.symbol)
-            mv:settype(v.type or terra.types.error)
-            return mv
+            return newobject(exp, T.movevar, v.name, v.symbol):withtype(v.type or terra.types.error)
         end
         local fnlike = checkexp(exp.value,"luavalue")
         local arguments = checkexpressions(exp.arguments,"luavalue")
@@ -3028,7 +3026,6 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
     function checkcall(anchor, fnlikelist, arguments, castbehavior, allowambiguous, location)
         --arguments are always typed trees, or a lua object
         assert(#fnlikelist > 0)
-    
         --collect all the terra functions, stop collecting when we reach the first 
         --macro and record it as themacro
         local terrafunctions = terra.newlist()
@@ -3464,7 +3461,7 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
         local byfcall = {lhs = terralib.newlist(), rhs = terralib.newlist()}
         for i=1,#lhs do
             local to, from = lhs[i], rhs[i]
-            if from and checkraiicopyassignment(anchor, from, to) then
+            if from:is "movevar" or checkraiicopyassignment(anchor, from, to) then
                 --add assignment by __copy call
                 byfcall.rhs:insert(from)
                 byfcall.lhs:insert(to)
@@ -3602,12 +3599,20 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
                 if init then
                     stmts:insert(init)
                 end
-                stmts:insert(checkraiicopyassignment(anchor, byfcall.rhs[i], v))
+                if byfcall.rhs[i]:is "movevar" then
+                    stmts:insert(checkraiimoveassignment(anchor, byfcall.rhs[i], v))
+                else
+                    stmts:insert(checkraiicopyassignment(anchor, byfcall.rhs[i], v))
+                end
             else
                 ensurelvalue(v)
-                --apply copy assignment - memory resource management is in the
+                --apply copy/move assignment - memory resource management is in the
                 --hands of the programmer
-                stmts:insert(checkraiicopyassignment(anchor, byfcall.rhs[i], v))
+                if byfcall.rhs[i]:is "movevar" then
+                    stmts:insert(checkraiimoveassignment(anchor, byfcall.rhs[i], v))
+                else
+                    stmts:insert(checkraiicopyassignment(anchor, byfcall.rhs[i], v))
+                end
             end
         end
         if #stmts==0 then
