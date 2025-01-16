@@ -1,212 +1,195 @@
---__forward takes a value by reference and simply forwards it by reference,
---creating an rvalue
-local function addmissingforward(T)
-    if T:isstruct() then
-        if T.methods.__forward then
-            T.methods.__forward_generated = T.methods.__forward
-            return
-        end
-        if not T.methods.__forward and not T.methods.__forward_generated then
-            T.methods.__forward_generated = terra(self : &T)
-                return self --simply forward the variable (turning it into an rvalue)
-            end
-            T.methods.__forward = T.methods.__forward_generated
-            return
-        end
+local addmissinginit, addmissingdtor, addmissingcopy, addmissingmove
+
+local function ismanaged(T)
+    if not T:isstruct() then
+        return false
     end
+    addmissinginit(T)
+    addmissingdtor(T)
+    if T.methods.__dtor then
+        return true
+    end
+    return false
 end
 
+local function hasmanagedfields(V)
+    for i,e in ipairs(V:getentries()) do
+        if ismanaged(e.type) then
+            return true
+        end
+    end
+    return false
+end
+
+local function hasmethod(W, method)
+    if W:isstruct() then return W.methods[method]
+    elseif W:isarray() then return hasmethod(W.type, method)
+    else return false end
+end
+
+local runinit
+runinit = macro(function(receiver)
+    local V = receiver:gettype()
+    if V:isstruct() then
+        if not hasmethod(V, "__init") then
+            addmissinginit(V)
+        end
+        return `receiver:__init()
+    elseif V:isarray() then
+        return quote
+            for i = 0, V.N do
+                runinit(receiver[i])
+            end
+        end
+    elseif V:isprimitive() then
+        return quote receiver = [V](0) end
+    elseif V:ispointer() then
+        return quote receiver = nil end
+    else
+        error("case not implemented")
+    end
+end)
+
 --__create a missing __init for 'T' and all its entries
-local function addmissinginit(T)
-
-    --flag that signals that a missing __init method needs to
-    --be generated
-    local generate = false
-
-    local runinit = macro(function(self)
-        local V = self:gettype()
-        --avoid generating code for empty array initializers
-        local function hasinit(U)
-            if U:isstruct() then return U.methods.__init
-            elseif U:isarray() then return hasinit(U.type)
-            else return false end
-        end
-        if V:isstruct() then
-            if not V.methods.__init then
-                addmissinginit(V)
-            end
-            local method = V.methods.__init
-            if method then
-                generate = true
-                return quote
-                    self:__init()
-                end
-            end
-        elseif V:isarray() and hasinit(V) then
-            return quote
-                var pa = &self
-                for i = 0,T.N do
-                    runinit((@pa)[i])
-                end
-            end
-        elseif V:ispointer() then
-            return quote
-                self = nil
-            end
-        end
-        return quote end
-    end)
-
-    local generateinit = macro(function(self)
-        local T = self:gettype()
-        local stmts = terralib.newlist()
-        local entries = T:getentries()
-        for i,e in ipairs(entries) do
-            if e.field then
-                local expr = `runinit(self.[e.field])
-                if expr and #expr.tree.statements > 0 then
-                    stmts:insert(expr)
-                end
-            end
-        end
-        return stmts
-    end)
-
+function addmissinginit(T)
     if T:isstruct() then
-        --__init is implemented
-        if T.methods.__init and not T.methods.__init_generated then
-            T.methods.__init_generated = T.methods.__init
-            return
-        end
-        --__dtor is not implemented
-        if not T.methods.__init and not T.methods.__init_generated then
-            T.methods.__init_generated = terra(self : &T)
-                generateinit(@self)
+        if not T.methods.__init then
+            T.methods.__init = terra(self : &T)
+                escape
+                    for i,e in ipairs(T:getentries()) do
+                        emit quote runinit(self.[e.field]) end
+                    end
+                end
             end
-            if generate then
-                T.methods.__init = T.methods.__init_generated
-            else
-                --set T.methods.__init to false. This means that addmissinginit(T) will not
-                --attempt to generate 'T.methods.__init' twice
-                T.methods.__init = false
-            end
-            return
+            --flag that denotes that '__init' was generated rather than
+            --implemented by the user
+            T.methods.__init_generated = true
         end
     end
 end
 
 --__create a missing __dtor for 'T' and all its entries
-local function addmissingdtor(T)
-
-    --flag that signals that a missing __dtor method needs to
-    --be generated
-    local generate = false
-
-    local rundtor = macro(function(self)
-        local V = self:gettype()
-        --avoid generating code for empty array destructors
-        local function hasdtor(U)
-            if U:isstruct() then return U.methods.__dtor
-            elseif U:isarray() then return hasdtor(U.type)
-            else return false end
-        end
+function addmissingdtor(T)
+    local generated = false
+    local rundtor
+    rundtor = macro(function(receiver)
+        local V = receiver:gettype()
         if V:isstruct() then
-            if not V.methods.__dtor then
-                addmissingdtor(V)
+            addmissingdtor(V)
+            if hasmethod(V, "__dtor") then
+                generated = true
+                return `receiver:__dtor()
             end
-            local method = V.methods.__dtor
-            if method then
-                generate = true
+        elseif V:isarray() then
+            addmissingdtor(V.type)
+            if hasmethod(V.type, "__dtor") then
+                generated = true
                 return quote
-                    self:__dtor()
-                end
-            end
-        elseif V:isarray() and hasdtor(V) then
-            return quote
-                var pa = &self
-                for i = 0,T.N do
-                    rundtor((@pa)[i])
+                    for i = 0, V.N do
+                        rundtor(receiver[i])
+                    end
                 end
             end
         end
         return quote end
     end)
 
-    local generatedtor = macro(function(self)
-        local T = self:gettype()
-        local stmts = terralib.newlist()
-        local entries = T:getentries()
-        for i,e in ipairs(entries) do
-            if e.field then
-                local expr = `rundtor(self.[e.field])
-                if expr and #expr.tree.statements > 0 then
-                    stmts:insert(expr)
+    if T:isstruct() then
+        if not T.methods.__dtor and not T.methods.__dtor_generated then
+            local imp = terra(self : &T)
+                escape
+                    for i,e in ipairs(T:getentries()) do
+                        emit quote rundtor(self.[e.field]) end
+                    end
                 end
             end
+            --the following flag will signal that addmissingdtor(T) will not
+            --attempt to generate 'T.methods.__dtor' twice
+            T.methods.__dtor_generated = true
+            --if non-trivial destructor code was actually generated then
+            --set assign the implementation to '__dtor'
+            if generated then
+                T.methods.__dtor = imp
+            end
         end
-        return stmts
+    end
+end
+
+--__create a missing __move for 'T' and all its entries
+function addmissingmove(T)
+    local runmove
+    runmove = macro(function(from, to)
+        local V = from:gettype()
+        if V:isstruct() and ismanaged(V) then
+            addmissingmove(V)
+            return quote [V.methods.__move](&from, &to) end --__move is always generated, so no need for an if-here
+        elseif V:isarray() then
+            return quote
+                for i = 0, V.N do
+                    runmove(from[i], to[i])
+                end
+            end
+        else
+            return quote
+                to = from           --regular bitcopy for unmanaged variables
+                runinit(from)       --initialize old variables
+            end
+        end
     end)
 
-    if T:isstruct() then
-        --__dtor is implemented
-        if T.methods.__dtor and not T.methods.__dtor_generated then
-            T.methods.__dtor_generated = T.methods.__dtor
-            return
-        end
-        --__dtor is not implemented
-        if not T.methods.__dtor and not T.methods.__dtor_generated then
-            --generate __dtor
-            T.methods.__dtor_generated = terra(self : &T)
-                generatedtor(@self)
-            end
-            if generate then
-                T.methods.__dtor = T.methods.__dtor_generated
+    if T:isstruct() and ismanaged(T) then
+        if not T.methods.__move and not T.methods.__move_generated then
+            if hasmanagedfields(T) then
+                T.methods.__move = terra(from : &T, to : &T)
+                    escape
+                        for i,e in ipairs(T:getentries()) do
+                            emit quote runmove(from.[e.field], to.[e.field]) end
+                        end
+                    end
+                end
             else
-                --set T.methods.__dtor to false. This means that addmissingdtor(T) will not
-                --attempt to generate 'T.methods.__dtor' twice
-                T.methods.__dtor = false
+                T.methods.__move = terra(from : &T, to : &T)
+                    to:__dtor()     --clear old resources of 'to', just-in-case
+                    escape
+                        --copying field-by-field. otherwise the copy-constructor
+                        --may be called
+                        for i,e in ipairs(T:getentries()) do
+                            emit quote runmove(from.[e.field], to.[e.field]) end
+                        end
+                    end
+                    from:__init()   --re-initializing bits of 'from'
+                end
             end
-            return
+            --the following flag will signal that addmissingmove(T) will not
+            --attempt to generate 'T.methods.__move' twice
+            T.methods.__move_generated = true
         end
     end
 end
 
 --__create a missing __copy for 'T' and all its entries
-local function addmissingcopy(T)
-
-    --flag that signals that a missing __copy method needs to
-    --be generated
-    local generate = false
-
-    local runcopy = macro(function(from, to)
-        local U = from:gettype()
-        local V = to:gettype()
-        --avoid generating code for empty array initializers
-        local function hascopy(W)
-            if W:isstruct() then return W.methods.__copy
-            elseif W:isarray() then return hascopy(W.type)
-            else return false end
-        end
-        if V:isstruct() and U==V then
-            if not V.methods.__copy then
+function addmissingcopy(T)
+    local runcopy
+    runcopy = macro(function(from, to)
+        local V = from:gettype()
+        if V:isstruct() then
+            if ismanaged(V) then
                 addmissingcopy(V)
-            end
-            local method = V.methods.__copy
-            if method then
-                generate = true
+                --copy will always be generated for a managed variable, so
+                --we do a sanity check 
+                assert(hasmethod(V, "__copy"), "__copy could not be generated.")
                 return quote
-                    method(&from, &to)
+                    [V.methods.__copy](&from, &to)
                 end
             else
                 return quote
                     to = from
                 end
             end
-        elseif V:isarray() and hascopy(V) then
+        elseif V:isarray() then
             return quote
-                var pa = &self
-                for i = 0,V.N do
-                    runcopy((@pa)[i])
+                for i = 0, V.N do
+                    runcopy(from[i], to[i])
                 end
             end
         else
@@ -214,93 +197,37 @@ local function addmissingcopy(T)
                 to = from
             end
         end
-        return quote end
     end)
 
-    local generatecopy = macro(function(from, to)
-        local stmts = terralib.newlist()
-        local entries = T:getentries()
-        for i,e in ipairs(entries) do
-            local field = e.field
-            if field then
-                local expr = `runcopy(from.[field], to.[field])
-                if expr and #expr.tree.statements > 0 then
-                    stmts:insert(expr)
-                end
-            end
-        end
-        return stmts
-    end)
-
-    if T:isstruct() then
-        --__copy is implemented
-        if T.methods.__copy and not T.methods.__copy_generated then
-            T.methods.__copy_generated = T.methods.__copy
-            return
-        end
-        --__copy is not implemented
+    if T:isstruct() and ismanaged(T) then
         if not T.methods.__copy and not T.methods.__copy_generated then
-            --generate __copy
-            T.methods.__copy_generated = terra(from : &T, to : &T)
-                generatecopy(@from, @to)
-            end
-            if generate then
-                T.methods.__copy = T.methods.__copy_generated
-            else
-                --set T.methods.__copy to false. This means that addmissingcopy(T) will not
-                --attempt to generate 'T.methods.__copy' twice
-                T.methods.__copy = false
-            end
-            return
-        end
-    end
-end
-
---generate __move, which moves resources to a new allocated variable
-local function addmissingmove(T)
-    if T:isstruct() then
-        if T.methods.__move and not T.methods.__move_generated then
-            T.methods.__move_generated = T.methods.__move
-            return
-        end
-
-        if not T.methods.__move and not T.methods.__move_generated then
-            --generate missing __forward and __init
-            addmissingforward(T)
-            addmissinginit(T)
-            --if an __init was generated then we can generate a specialized __move
-            if T.methods.__init then
-                T.methods.__move_generated = terra(self : &T)
-                    var new = @self:__forward_generated() --shallow copy of 'self'
-                    self:__init_generated()   --initialize old 'self'
-                    return new
+            if hasmanagedfields(T) then
+                T.methods.__copy = terra(from : &T, to : &T)
+                    escape
+                        for i,e in ipairs(T:getentries()) do
+                            emit quote runcopy(from.[e.field], to.[e.field]) end
+                        end
+                    end
                 end
-                T.methods.__move = T.methods.__move_generated
-            --otherwise, __move is just __forward and is accessible only in __move_generated
             else
-                T.methods.__move_generated = T.methods.__forward_generated
-                T.methods.__move = false
+                --if a managed variable or any of its fields do not implement 
+                --a __copy then we fallback to a __move
+                addmissingmove(T)
+                T.methods.__copy = T.methods.__move
             end
-            return
+            --the following flag will signal that addmissingcopy(T) will not
+            --attempt to generate 'T.methods.__copy' twice
+            T.methods.__copy_generated = true
         end
     end
 end
 
-local function addmissingraii(T)
-    addmissingforward(T)
-    addmissingdinit(T)
-    addmissingdtor(T)
-    addmissingcopy(T)
-    addmissingmove(T)
-end
-
+--add definitions such that we can access them from terralib
 terralib.ext = {
     addmissing = {
-        __forward = addmissingforward,
         __init = addmissinginit,
         __dtor = addmissingdtor,
         __copy = addmissingcopy,
         __move = addmissingmove,
-        __all = addmissingraii
     }
 }

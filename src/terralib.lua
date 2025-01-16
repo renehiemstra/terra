@@ -80,6 +80,8 @@ tree =
      | luaobject(any value)
      | setteru(function setter) # temporary node introduced and removed during typechecking to handle __update and __setfield
      | quote(tree tree)
+     | movevar(string name, Symbol symbol)
+     | copyvar(string name, Symbol symbol)
      # trees that exist after typechecking and handled by the backend:
      | var(string name, Symbol? symbol) #symbol is added during specialization
      | literal(any? value, Type type)
@@ -151,6 +153,11 @@ terra.irtypes = T
 T.var.lvalue = true
 
 function T.allocvar:settype(typ)
+    assert(T.Type:isclassof(typ))
+    self.type, self.symbol.type = typ,typ
+end
+
+function T.movevar:settype(typ)
     assert(T.Type:isclassof(typ))
     self.type, self.symbol.type = typ,typ
 end
@@ -2952,6 +2959,38 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
         end
     end
 
+    --type check raii __move (move-assignment) methods. They are generated
+    --if they are missing.
+    local function checkraiimoveassignment(anchor, from, to)
+        if not terralib.ext then return end
+        --check for 'from.type.methods.__move' and 'to.type.methods.__move' and generate them
+        --if needed
+        if not (ismanaged(from, "__move") or ismanaged(to, "__move")) then
+            --return early in case types are not managed
+            return
+        end
+        --if `to` is an allocvar then set type and turn into corresponding `var`
+        if to:is "allocvar" then
+            if not to.type then
+                to:settype(from.type or terra.types.error)
+            end
+            to = newobject(anchor,T.var,to.name,to.symbol):setlvalue(true):withtype(to.type)
+        end
+        --list of overloaded __move metamethods
+        local overloads = terra.newlist()
+        local function checkoverload(v)
+            if hasraiimethod(v, "__move") then
+                overloads:insert(asterraexpression(anchor, v.type.methods.__move, "luaobject"))
+            end
+        end
+        --add overloaded methods based on left- and right-hand-side of the assignment
+        checkoverload(from)
+        checkoverload(to)
+        if #overloads > 0 then
+            return checkcall(anchor, overloads, terralib.newlist{from, to}, "all", true, "expression")
+        end
+    end
+
     local function checkmethod(exp, location)
         local methodname = checklabel(exp.name,true).value
         assert(type(methodname) == "string" or terra.islabel(methodname))
@@ -2961,6 +3000,13 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
     end
 
     local function checkapply(exp, location)
+        if exp.value.name == "__move__" then
+            local arguments = checkexpressions(exp.arguments,"luavalue")
+            local v = arguments[1]
+            local mv = newobject(exp, T.movevar, v.name, v.symbol)
+            mv:settype(v.type or terra.types.error)
+            return mv
+        end
         local fnlike = checkexp(exp.value,"luavalue")
         local arguments = checkexpressions(exp.arguments,"luavalue")
         if not fnlike:is "luaobject" then
@@ -3021,7 +3067,7 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
         end
 
         local function createcall(callee, paramlist)
-            local function injectcopyassignment(i, p)
+            local function injectcopyormoveassignment(i, p, checkassignment)
                 local stmts = List()
                 --allocate temporary
                 local lv,l = allocvar(p, p.type, "<tmp>")
@@ -3031,8 +3077,8 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
                 if init then
                     stmts:insert(init)
                 end
-                --insert __copy for temporary
-                local cp = checkraiicopyassignment(p, p, l)
+                --insert __copy or __move for temporary
+                local cp = checkassignment(p, p, l)
                 --only update the parameter if a copy-assignment is implemented
                 --that maps 'from' onto 'to' of the same type. otherwise we perform
                 --a standard bitcopy. maybe we should raise an error here?
@@ -3041,12 +3087,17 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
                     --reset parameter input as the temporary object that is initialized using
                     --the copy-assignment
                     paramlist[i] = createlet(p, stmts, List{l}, true)
+                else
+                    diag:reporterror(p, "copy-assignment is not implemented for type ", tostring(p.type))
                 end
             end
-            --inject copy-assignment for all managed variables that are passed by value
+            --inject copy/move-assignment for all managed variables that are passed by value
             for i, p in ipairs(paramlist) do
-                if ismanaged(p, "__copy") then
-                    injectcopyassignment(i, p)
+                if p:is "movevar" then
+                    p = newobject(anchor,T.var,p.name,p.symbol):setlvalue(true):withtype(p.type)
+                    injectcopyormoveassignment(i, p, checkraiimoveassignment)
+                elseif ismanaged(p, "__copy") then
+                    injectcopyormoveassignment(i, p, checkraiicopyassignment)
                 end
             end
             --create actual call with this parameterlist
@@ -3338,7 +3389,7 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
     
         local result = docheck(e_)
         --freeze all types returned by the expression (or list of expressions)
-        if not result:is "luaobject" and not result:is "setteru" then
+        if not result:is "luaobject" and not result:is "setteru" and not result:is "movevar" then
             assert(terra.types.istype(result.type))
             result.type:tcomplete(result)
         end
@@ -3877,11 +3928,11 @@ function terra.includecstring(code,cargs,target)
     	args:insert(path)
     end
     -- Obey the SDKROOT variable on macOS to match Clang behavior.
-    local sdkroot = os.getenv("SDKROOT")
-    if sdkroot then
-        args:insert("-isysroot")
-        args:insert(sdkroot)
-    end
+    --local sdkroot = os.getenv("SDKROOT")
+    --if sdkroot then
+    --    args:insert("-isysroot")
+    --    args:insert(sdkroot)
+    --end
     -- Set GNU C version to match value set by Clang: https://github.com/llvm/llvm-project/blob/f77c948d56b09b839262e258af5c6ad701e5b168/clang/lib/Driver/ToolChains/Clang.cpp#L5750-L5753
     if ffi.os ~= "Windows" and terralib.llvm_version >= 100 then
       args:insert("-fgnuc-version=4.2.1")

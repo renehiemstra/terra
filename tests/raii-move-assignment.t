@@ -1,0 +1,53 @@
+require "terralibext"           --load 'terralibext' to enable raii
+
+local test = require("test")
+local io = terralib.includec("stdio.h")
+
+local function printtestheader(s)
+    print()
+    print("===========================")
+    print(s)
+    print("===========================")
+end
+
+local struct A {
+    data : int
+}
+
+terra A:__init()
+    self.data = 1
+end
+
+terra A.methods.__copy(from: &A, to: &A)
+    to.data = from.data + 1
+end
+
+terra A:__dtor()
+    self.data = -1
+end
+
+--passing by value, so copy-assignment is performed on both 'a' and 'b'
+--increasing 'a.data' and 'b.data' by one
+terra myfun(a : A, b : A)
+    return a.data + b.data
+end
+
+printtestheader("raii-move-assignment.t - testing __copy when passing by value")
+
+terra main()
+    var a : A --a.data = 1
+    var b : A --b.data = 1
+    return myfun(a, b) --copy-assignment is performed for 'a' and 'b', so myfun returns 4
+end
+test.eq(main(), 4)
+
+printtestheader("raii-move-assignment.t - testing __move when passing by value")
+
+terra main2()
+    var a : A
+    a.data = 2  --a.data = 2
+    var b : A --b.data = 1
+    var s = myfun(__move__(a), b) --'a' is moved from, 'b' is copied, --> s = 2 + 2
+    return s + a.data --'a' has been moved from, so its __init has been called --> a.data = 1
+end
+test.eq(main2(), 5)

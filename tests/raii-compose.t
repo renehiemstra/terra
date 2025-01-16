@@ -49,6 +49,7 @@ local struct D{
     data_c : C
 }
 
+
 printtestheader("raii-compose.t - testing __init for managed struct")
 local terra testinit_A()
     var a : A

@@ -40,6 +40,10 @@ A.methods.__copy:adddefinition(terra(from : &A, to : &int)
     @to = from.data
 end)
 
+--temporary method such that __copy is not called
+A.methods.__move = terra(self : &A)
+    return @self
+end
 
 printtestheader("raii.t - testing __init metamethod")
 terra testinit()
@@ -96,7 +100,7 @@ end
 test.eq(testcopyassignment2(), 5)
 
 --generate implementation for __move
-terralib.ext.addmissing.__move(A)
+--terralib.ext.addmissing.__move(A)
 
 printtestheader("raii.t - return from function.")
 terra returnone()
