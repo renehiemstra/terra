@@ -222,6 +222,24 @@ function addmissingcopy(T)
     end
 end
 
+--__forward takes a value by reference and simply forwards it by reference,
+--creating an rvalue
+local function addmissingforward(T)
+    if T:isstruct() then
+        if T.methods.__forward then
+            T.methods.__forward_generated = T.methods.__forward
+            return
+        end
+        if not T.methods.__forward and not T.methods.__forward_generated then
+            T.methods.__forward_generated = terra(self : &T)
+                return self --simply forward the variable (turning it into an rvalue)
+            end
+            T.methods.__forward = T.methods.__forward_generated
+            return
+        end
+    end
+end
+
 --add definitions such that we can access them from terralib
 terralib.ext = {
     addmissing = {
@@ -229,5 +247,6 @@ terralib.ext = {
         __dtor = addmissingdtor,
         __copy = addmissingcopy,
         __move = addmissingmove,
+        __forward = addmissingforward
     }
 }

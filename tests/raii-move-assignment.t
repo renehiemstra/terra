@@ -88,4 +88,59 @@ terra main4()
     var b = __move__(a) --here we are calling the generated __move --> b.data = 3, a.data = 1
     return a.data + b.data
 end
-test.eq(main1(), 4)
+test.eq(main4(), 4)
+
+
+printtestheader("raii-move-assignment.t - testing __copy from macro")
+
+local from = macro(function(data)
+    return quote
+        var a : A
+        a.data = data
+    in
+        a
+    end
+end)
+
+terra main5()
+    var a = from(5) --__copy is called and adds 1
+    return a.data
+end
+test.eq(main5(), 6)
+
+printtestheader("raii-move-assignment.t - testing __move from macro")
+
+local fromusingmove = macro(function(data)
+    return quote
+        var a : A
+        a.data = data
+    in
+        __move__(a)
+    end
+end)
+
+terra main6()
+    var a = fromusingmove(5) --__copy is called and adds 1
+    return a.data
+end
+test.eq(main6(), 5)
+
+printtestheader("raii-move-assignment.t - testing __move, __copy, and bitcopy")
+
+terra main7(k : int)
+    var a : A
+    a.data = 3
+    if k == 0 then
+        var b = a --__copy is called --> b.data = 3+1
+        return a.data + b.data --> 7
+    elseif k == 1 then
+        var b = __move__(a) --__move is called --> a.data = 1 and b.data = 3
+        return a.data + b.data --> 4
+    elseif k == 2 then
+        var b = __copy__(a) --bitcopy is performed --> a.data = 3 and b.data = 3
+        return a.data + b.data --> 6
+    end
+end
+test.eq(main7(0), 7)
+test.eq(main7(1), 4)
+test.eq(main7(2), 6)

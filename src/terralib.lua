@@ -80,8 +80,6 @@ tree =
      | luaobject(any value)
      | setteru(function setter) # temporary node introduced and removed during typechecking to handle __update and __setfield
      | quote(tree tree)
-     | movevar(string name, Symbol symbol)
-     | copyvar(string name, Symbol symbol)
      # trees that exist after typechecking and handled by the backend:
      | var(string name, Symbol? symbol) #symbol is added during specialization
      | literal(any? value, Type type)
@@ -153,11 +151,6 @@ terra.irtypes = T
 T.var.lvalue = true
 
 function T.allocvar:settype(typ)
-    assert(T.Type:isclassof(typ))
-    self.type, self.symbol.type = typ,typ
-end
-
-function T.movevar:settype(typ)
     assert(T.Type:isclassof(typ))
     self.type, self.symbol.type = typ,typ
 end
@@ -1843,6 +1836,13 @@ function T.tree:withtype(type) -- for typed tree
     self.type = type
     return self
 end
+function T.tree:setassignment(v)
+    if v then
+        self.assignment = v
+    end
+    return self
+end
+
 -- END TYPE
 
 
@@ -2633,7 +2633,7 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
     function createlet(anchor, ns, ne, hasstatements)
         local r = newobject(anchor,T.letin,ns,ne,hasstatements)
         if #ne == 1 then
-            r:withtype(ne[1].type):setlvalue(ne[1].lvalue)
+            r:withtype(ne[1].type):setlvalue(ne[1].lvalue):setassignment(ne[1].assignment)
         else
             r:withtype(terra.types.tuple(unpack(ne:map("type"))))
         end
@@ -2973,9 +2973,6 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
         if to:is "allocvar" then
             to = newobject(anchor,T.var,to.name,to.symbol):setlvalue(true):withtype(from.type or terra.types.error)
         end
-        if from:is "movevar" then
-            from = newobject(anchor,T.var,from.name,from.symbol):setlvalue(true):withtype(from.type or terra.types.error)
-        end
         --list of overloaded __move metamethods
         local overloads = terra.newlist()
         local function checkoverload(v)
@@ -3003,7 +3000,13 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
         if exp.value.name == "__move__" then
             local arguments = checkexpressions(exp.arguments,"luavalue")
             local v = arguments[1]
-            return newobject(exp, T.movevar, v.name, v.symbol):withtype(v.type or terra.types.error)
+            v:setassignment("move")
+            return v
+        elseif exp.value.name == "__copy__" then
+            local arguments = checkexpressions(exp.arguments,"luavalue")
+            local v = arguments[1]
+            v:setassignment("copy")
+            return v
         end
         local fnlike = checkexp(exp.value,"luavalue")
         local arguments = checkexpressions(exp.arguments,"luavalue")
@@ -3090,8 +3093,9 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
             end
             --inject copy/move-assignment for all managed variables that are passed by value
             for i, p in ipairs(paramlist) do
-                if p:is "movevar" then
-                    p = newobject(anchor,T.var,p.name,p.symbol):setlvalue(true):withtype(p.type)
+                if p.assignment == "copy" then
+                    --passthrough - we perform a bitcopy
+                elseif p.assignment == "move" then
                     injectcopyormoveassignment(i, p, checkraiimoveassignment)
                 elseif ismanaged(p, "__copy") then
                     injectcopyormoveassignment(i, p, checkraiicopyassignment)
@@ -3386,7 +3390,7 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
     
         local result = docheck(e_)
         --freeze all types returned by the expression (or list of expressions)
-        if not result:is "luaobject" and not result:is "setteru" and not result:is "movevar" then
+        if not result:is "luaobject" and not result:is "setteru" then
             assert(terra.types.istype(result.type))
             result.type:tcomplete(result)
         end
@@ -3461,7 +3465,11 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
         local byfcall = {lhs = terralib.newlist(), rhs = terralib.newlist()}
         for i=1,#lhs do
             local to, from = lhs[i], rhs[i]
-            if from:is "movevar" or checkraiicopyassignment(anchor, from, to) then
+            if from.assignment == "copy" then
+                --we perform a bitcopy, which is equal to a regular assignment
+                regular.rhs:insert(from)
+                regular.lhs:insert(to)
+            elseif from.assignment == "move" or checkraiicopyassignment(anchor, from, to) then
                 --add assignment by __copy call
                 byfcall.rhs:insert(from)
                 byfcall.lhs:insert(to)
@@ -3599,19 +3607,21 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
                 if init then
                     stmts:insert(init)
                 end
-                if byfcall.rhs[i]:is "movevar" then
-                    stmts:insert(checkraiimoveassignment(anchor, byfcall.rhs[i], v))
+                local r = byfcall.rhs[i]
+                if r.assignment == "move" then
+                    stmts:insert(checkraiimoveassignment(anchor, r, v))
                 else
-                    stmts:insert(checkraiicopyassignment(anchor, byfcall.rhs[i], v))
+                    stmts:insert(checkraiicopyassignment(anchor, r, v))
                 end
             else
                 ensurelvalue(v)
                 --apply copy/move assignment - memory resource management is in the
                 --hands of the programmer
-                if byfcall.rhs[i]:is "movevar" then
-                    stmts:insert(checkraiimoveassignment(anchor, byfcall.rhs[i], v))
+                local r = byfcall.rhs[i]
+                if r.assignment == "move" then
+                    stmts:insert(checkraiimoveassignment(anchor, r, v))
                 else
-                    stmts:insert(checkraiicopyassignment(anchor, byfcall.rhs[i], v))
+                    stmts:insert(checkraiicopyassignment(anchor, r, v))
                 end
             end
         end
@@ -3933,11 +3943,11 @@ function terra.includecstring(code,cargs,target)
     	args:insert(path)
     end
     -- Obey the SDKROOT variable on macOS to match Clang behavior.
-    local sdkroot = os.getenv("SDKROOT")
-    if sdkroot then
-        args:insert("-isysroot")
-        args:insert(sdkroot)
-    end
+    --local sdkroot = os.getenv("SDKROOT")
+    --if sdkroot then
+    --    args:insert("-isysroot")
+    --    args:insert(sdkroot)
+    --end
     -- Set GNU C version to match value set by Clang: https://github.com/llvm/llvm-project/blob/f77c948d56b09b839262e258af5c6ad701e5b168/clang/lib/Driver/ToolChains/Clang.cpp#L5750-L5753
     if ffi.os ~= "Windows" and terralib.llvm_version >= 100 then
       args:insert("-fgnuc-version=4.2.1")
