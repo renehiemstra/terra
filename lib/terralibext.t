@@ -4,9 +4,9 @@ local function ismanaged(T)
     if not T:isstruct() then
         return false
     end
-    addmissinginit(T)
     addmissingdtor(T)
     if T.methods.__dtor then
+        addmissinginit(T)
         return true
     end
     return false
@@ -27,6 +27,21 @@ local function hasmethod(W, method)
     else return false end
 end
 
+local function checkuniontypelist(t)
+    assert(terralib.israwlist(t) and #t > 0, "CompileError: expected a union type.")
+    assert(t[1].type, "CompileError: expected a valid type.")
+    local size = sizeof(t[1].type)
+    for i,e in ipairs(t) do
+        local T = e.type
+        if T then
+            assert(not ismanaged(T), "CompileError: managed types not allowed in union type.")
+            assert(sizeof(T) == size, "CompileError: expected union types to have identical size.")
+        else
+            error("CompileError: expected a valid type.")
+        end
+    end
+end
+
 local runinit
 runinit = macro(function(receiver)
     local V = receiver:gettype()
@@ -41,6 +56,8 @@ runinit = macro(function(receiver)
                 runinit(receiver[i])
             end
         end
+    elseif V:isvector() then
+        return quote receiver = 0 end
     elseif V:isprimitive() then
         return quote receiver = [V](0) end
     elseif V:ispointer() then
@@ -57,7 +74,14 @@ function addmissinginit(T)
             T.methods.__init = terra(self : &T)
                 escape
                     for i,e in ipairs(T:getentries()) do
-                        emit quote runinit(self.[e.field]) end
+                        if e.field then
+                            --regular fields
+                            emit quote runinit(self.[e.field]) end
+                        else
+                            --take care of 'union' types
+                            checkuniontypelist(e)
+                            emit quote runinit(self.[e[1].field]) end
+                        end
                     end
                 end
             end
@@ -99,7 +123,9 @@ function addmissingdtor(T)
             local imp = terra(self : &T)
                 escape
                     for i,e in ipairs(T:getentries()) do
-                        emit quote rundtor(self.[e.field]) end
+                        if e.field then
+                            emit quote rundtor(self.[e.field]) end
+                        end
                     end
                 end
             end
@@ -143,7 +169,12 @@ function addmissingmove(T)
                 T.methods.__move = terra(from : &T, to : &T)
                     escape
                         for i,e in ipairs(T:getentries()) do
-                            emit quote runmove(from.[e.field], to.[e.field]) end
+                            if e.field then
+                                emit quote runmove(from.[e.field], to.[e.field]) end
+                            else
+                                checkuniontypelist(e)
+                                emit quote runmove(from.[e[1].field], to.[e[1].field]) end
+                            end
                         end
                     end
                 end
@@ -154,7 +185,12 @@ function addmissingmove(T)
                         --copying field-by-field. otherwise the copy-constructor
                         --may be called
                         for i,e in ipairs(T:getentries()) do
-                            emit quote to.[e.field] = from.[e.field] end
+                            if e.field then
+                                emit quote to.[e.field] = from.[e.field] end
+                            else
+                                checkuniontypelist(e)
+                                emit quote to.[e[1].field] = from.[e[1].field] end
+                            end
                         end
                     end
                     from:__init()   --re-initializing bits of 'from'
@@ -205,7 +241,12 @@ function addmissingcopy(T)
                 T.methods.__copy = terra(from : &T, to : &T)
                     escape
                         for i,e in ipairs(T:getentries()) do
-                            emit quote runcopy(from.[e.field], to.[e.field]) end
+                            if e.field then
+                                emit quote runcopy(from.[e.field], to.[e.field]) end
+                            else
+                                checkuniontypelist(e)
+                                emit quote runcopy(from.[e[1].field], to.[e[1].field]) end
+                            end
                         end
                     end
                 end
