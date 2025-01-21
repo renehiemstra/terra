@@ -69,10 +69,29 @@ local genref = macro(function()
     end
 end)
 
-terra main()
+terra main1()
     nglobal = 0
     var y = genref()
     return getn()
 end
-test.eq(main(), 0)
+test.eq(main1(), 0)
 test.eq(getn(), 2)
+
+printtestheader("raii-meta.t - testing __dtor in macro 'letin' block with a handle to a managed variable.")
+
+local genhandle = macro(function()
+    return quote
+        var x : A
+        var z = __handle__(x) --provides a handle to x, no __dtor is called
+    in
+        x
+    end
+end)
+
+terra main2()
+    nglobal = 0
+    var y = genhandle()
+    return getn()
+end
+test.eq(main2(), 0)
+test.eq(getn(), 1)

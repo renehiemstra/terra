@@ -966,6 +966,15 @@ function T.Symbol:__tostring()
 end
 function T.Symbol:tocname() return "__symbol"..tostring(self.id) end
 
+--flag that signals that this symbol is attached to a variable that is like
+--a handle to a managed variable, and should not invoke a __dtor
+function T.Symbol:sethandle(v)
+    if v == true then
+        self.ishandle = true
+    end
+    return self
+end
+
 _G["symbol"] = terra.newsymbol 
 
 -- LABEL
@@ -2869,7 +2878,7 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
         local pos = rstat and #stats or #stats+1
         --place destructor calls for variables that are not returned
         local function placedestructorcall(name, sym)
-            if not rsyms[name] then
+            if not rsyms[name] and not sym.ishandle then
                 --if not a return variable, then check for an implementation of methods.__dtor
                 local reciever = newobject(anchor,T.var, name, sym):setlvalue(true):withtype(sym.type)
                 local dtor = checkraiimethodwithreceiver(anchor, reciever, "__dtor")
@@ -3019,6 +3028,11 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
             local arguments = checkexpressions(exp.arguments,"luavalue")
             local v = arguments[1]
             v:setassignment("copy")
+            return v
+        elseif exp.value.name == "__handle__" then
+            local arguments = checkexpressions(exp.arguments,"luavalue")
+            local v = arguments[1]
+            v:setassignment("handle")
             return v
         end
         local fnlike = checkexp(exp.value,"luavalue")
@@ -3484,6 +3498,11 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
             local to, from = lhs[i], rhs[i]
             if from.assignment == "copy" then
                 --we perform a bitcopy, which is equal to a regular assignment
+                regular.rhs:insert(from)
+                regular.lhs:insert(to)
+            elseif from.assignment == "handle" then
+                --we return a handle to the object, which does not invoke a __dtor
+                to.symbol:sethandle(true)
                 regular.rhs:insert(from)
                 regular.lhs:insert(to)
             elseif from.assignment == "move" or checkraiicopyassignment(anchor, from, to) then
