@@ -2829,7 +2829,7 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
     end
 
     --generate and typecheck raii __dtor's for use in `block` (scope) statement
-    local function checkraiidtors(anchor, stats)
+    local function checkraiidtors(anchor, stats, exprs)
         if not terralib.ext then return stats end
         --extract the return statement from `stats`, if there is one
         local function extractreturnstat()
@@ -2844,17 +2844,27 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
         local rstat = extractreturnstat()
         --extract the returned `var` symbols from a return statement
         local function extractreturnedsymbols()
+            local function addtoreturnedsymbols(ret, expressions)
+                for i,v in ipairs(expressions) do
+                    if v:is "var" then
+                        ret[v.name] = v.symbol
+                    end
+                end
+            end
             local ret = {}
             --loop over expressions in a `letin` return statement
-            for i,v in ipairs(rstat.expression.expressions) do
-                if v:is "var" then
-                    ret[v.name] = v.symbol
-                end
+            if rstat then
+                addtoreturnedsymbols(ret, rstat.expression.expressions)
+            end
+            --loop over expressions from a 'letin' block
+            if exprs then
+                addtoreturnedsymbols(ret, exprs)
             end
             return ret
         end
         --get symbols that are returned in case of a return statement
-        local rsyms = rstat and rstat:is "returnstat" and extractreturnedsymbols() or {}
+        --or 'exprs' in a letin block
+        local rsyms = (rstat and rstat:is "returnstat" or exprs) and extractreturnedsymbols() or {}
         --get position at which to add destructor statements
         local pos = rstat and #stats or #stats+1
         --place destructor calls for variables that are not returned
@@ -2921,7 +2931,7 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
         if from:is "operator" and #from.operands==1 then
             from = from.operands[1]
         end
-        if from:is "apply" or from:is "returnstat" or from:is "operator" then
+        if from:is "apply" or from:is "returnstat" or from:is "operator" or from:is "letin" then
             return false
         else
             return true
@@ -3355,6 +3365,10 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
             elseif e:is "letin" then
                 local ns = checkstmts(e.statements)
                 local ne = checkexpressions(e.expressions)
+                if e.hasstatements then
+                    --in case of statements check for dtors of managed variables
+                    ns = checkraiidtors(e, ns, ne)
+                end
                 return createlet(e,ns,ne,e.hasstatements)
            elseif e:is "constructoru" then
                 local paramlist = terra.newlist()

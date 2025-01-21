@@ -90,24 +90,6 @@ terra main4()
 end
 test.eq(main4(), 4)
 
-
-printtestheader("raii-move-assignment.t - testing __copy from macro")
-
-local from = macro(function(data)
-    return quote
-        var a : A
-        a.data = data
-    in
-        a
-    end
-end)
-
-terra main5()
-    var a = from(5) --__copy is called and adds 1
-    return a.data
-end
-test.eq(main5(), 6)
-
 printtestheader("raii-move-assignment.t - testing __move from macro")
 
 local fromusingmove = macro(function(data)
@@ -115,7 +97,7 @@ local fromusingmove = macro(function(data)
         var a : A
         a.data = data
     in
-        __move__(a)
+        a --a is moved from by default
     end
 end)
 
