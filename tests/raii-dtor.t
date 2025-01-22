@@ -159,3 +159,15 @@ test.eq(getndestructorcalls(), 8)
 
 test.eq(main3(1), 5)
 test.eq(getndestructorcalls(), 6)
+
+
+printtestheader("raii-dtor.t - testing arraydestructor")
+
+terra main4()
+    ndestructorcalls = 0
+    var a : A[4]
+    return getndestructorcalls()
+end
+test.eq(main4(), 0)
+test.eq(getndestructorcalls(), 4)
+

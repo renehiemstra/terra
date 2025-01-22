@@ -41,6 +41,7 @@ local struct C{
 terralib.ext.addmissing.__init(C)
 terralib.ext.addmissing.__dtor(C)
 
+--check if a global is correctly initialized and destroyed
 local c = global(C)
 terra cdtor()
     c:__init()

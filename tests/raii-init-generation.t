@@ -9,12 +9,19 @@ local function printtestheader(s)
     print("===========================")
 end
 
+ninitcalls = global(int,`0)
+
+terra getninitcalls()
+    return ninitcalls
+end
+
 local struct A {
     data : int
 }
 
 terra A:__init()
     self.data = 1
+    ninitcalls = ninitcalls + 1
 end
 
 local struct B{
@@ -62,3 +69,13 @@ test.eq(getz(2), 0)
 test.eq(getq(0), 1)
 test.eq(getq(1), 1)
 test.eq(getv(), false)
+
+
+printtestheader("raii-init.t - testing generation of array initializer")
+
+terra main()
+    ninitcalls = 0
+    var a : A[4]
+    return getninitcalls()
+end
+test.eq(main(), 4)

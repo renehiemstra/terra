@@ -92,6 +92,22 @@ function addmissinginit(T)
     end
 end
 
+--generate an array destructor
+local generatearrayinitializer = terralib.memoize(function(V)
+    assert(V:isarray())
+    local eltype = V.type
+    addmissinginit(eltype)
+    if eltype.methods.__init then
+        return terra(array : &V)
+            var a = [&eltype](array)
+            for i = 0, V.N do
+                a:__init()
+                a = a + 1
+            end
+        end
+    end
+end)
+
 --__create a missing __dtor for 'T' and all its entries
 function addmissingdtor(T)
     local generated = false
@@ -117,7 +133,6 @@ function addmissingdtor(T)
         end
         return quote end
     end)
-
     if T:isstruct() then
         if not T.methods.__dtor and not T.methods.__dtor_generated then
             local imp = terra(self : &T)
@@ -141,7 +156,23 @@ function addmissingdtor(T)
     end
 end
 
---__create a missing __move for 'T' and all its entries
+--generate an array destructor
+local generatearraydestructor = terralib.memoize(function(V)
+    assert(V:isarray())
+    local eltype = V.type
+    addmissingdtor(eltype)
+    if eltype.methods.__dtor then
+        return terra(array : &V)
+            var a = [&eltype](array)
+            for i = 0, V.N do
+                a:__dtor()
+                a = a + 1
+            end
+        end
+    end
+end)
+
+--create a missing __move for 'T' and all its entries
 function addmissingmove(T)
     local runmove
     runmove = macro(function(from, to)
@@ -288,6 +319,8 @@ terralib.ext = {
         __dtor = addmissingdtor,
         __copy = addmissingcopy,
         __move = addmissingmove,
-        __forward = addmissingforward
+        __forward = addmissingforward,
+        arraydestructor = generatearraydestructor,
+        arrayinitializer = generatearrayinitializer
     }
 }

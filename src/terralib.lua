@@ -2824,17 +2824,43 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
         end
     end
 
+    local function checkraiiinit(anchor, receiver)
+        local typ = receiver.type
+        if typ:isstruct() then
+            return checkraiimethodwithreceiver(anchor, receiver, "__init")
+        elseif typ:isarray() then
+            local init = terralib.ext.addmissing.arrayinitializer(typ)
+            if init then
+                local f = asterraexpression(anchor, init, "luaobject")
+                return checkcall(anchor, List{f}, List{receiver}, "all", true, "expression")
+            end
+        end
+    end
+
     --generate and typecheck raii __init's for use in a 'defvar' statement
     local function checkraiiinitializers(anchor, lhs)
         if not terralib.ext then return end
         local stmts = terralib.newlist()
         for i,e in ipairs(lhs) do
-            local init = checkraiimethodwithreceiver(anchor, e, "__init")
+            local init = checkraiiinit(anchor, e)
             if init then
                 stmts:insert(init)
             end
         end
         return stmts
+    end
+
+    local function checkraiidtor(anchor, receiver)
+        local typ = receiver.type
+        if typ:isstruct() then
+            return checkraiimethodwithreceiver(anchor, receiver, "__dtor")
+        elseif typ:isarray() then
+            local dtor = terralib.ext.addmissing.arraydestructor(typ)
+            if dtor then
+                local f = asterraexpression(anchor, dtor, "luaobject")
+                return checkcall(anchor, List{f}, List{receiver}, "all", true, "expression")
+            end
+        end
     end
 
     --generate and typecheck raii __dtor's for use in `block` (scope) statement
@@ -2880,12 +2906,15 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
         local function placedestructorcall(name, sym)
             if not rsyms[name] and not sym.ishandle then
                 --if not a return variable, then check for an implementation of methods.__dtor
-                local reciever = newobject(anchor,T.var, name, sym):setlvalue(true):withtype(sym.type)
-                local dtor = checkraiimethodwithreceiver(anchor, reciever, "__dtor")
-                if dtor then
-                    --add deferred calls to the destructors
-                    table.insert(stats, pos, newobject(anchor, T.defer, dtor))
-                    pos = pos + 1
+                local typ = sym.type
+                if typ:isstruct() or typ:isarray() then
+                    local receiver = newobject(anchor, T.var, name, sym):setlvalue(true):withtype(typ)
+                    local dtor = checkraiidtor(anchor, receiver)
+                    if dtor then
+                        --add deferred calls to the destructors
+                        table.insert(stats, pos, newobject(anchor, T.defer, dtor))
+                        pos = pos + 1
+                    end
                 end
             end
         end
@@ -3979,11 +4008,11 @@ function terra.includecstring(code,cargs,target)
     	args:insert(path)
     end
     -- Obey the SDKROOT variable on macOS to match Clang behavior.
-    local sdkroot = os.getenv("SDKROOT")
-    if sdkroot then
-        args:insert("-isysroot")
-        args:insert(sdkroot)
-    end
+    --local sdkroot = os.getenv("SDKROOT")
+    --if sdkroot then
+    --    args:insert("-isysroot")
+    --    args:insert(sdkroot)
+    --end
     -- Set GNU C version to match value set by Clang: https://github.com/llvm/llvm-project/blob/f77c948d56b09b839262e258af5c6ad701e5b168/clang/lib/Driver/ToolChains/Clang.cpp#L5750-L5753
     if ffi.os ~= "Windows" and terralib.llvm_version >= 100 then
       args:insert("-fgnuc-version=4.2.1")
