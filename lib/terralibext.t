@@ -96,13 +96,13 @@ end
 local generatearrayinitializer = terralib.memoize(function(V)
     assert(V:isarray())
     local eltype = V.type
-    addmissinginit(eltype)
-    if eltype.methods.__init then
-        return terra(array : &V)
-            var a = [&eltype](array)
-            for i = 0, V.N do
-                a:__init()
-                a = a + 1
+    if eltype:isstruct() then
+        addmissinginit(eltype)
+        if eltype.methods.__init then
+            return terra(array : &V)
+                for i = 0, V.N do
+                    (@array)[i]:__init()
+                end
             end
         end
     end
@@ -160,13 +160,13 @@ end
 local generatearraydestructor = terralib.memoize(function(V)
     assert(V:isarray())
     local eltype = V.type
-    addmissingdtor(eltype)
-    if eltype.methods.__dtor then
-        return terra(array : &V)
-            var a = [&eltype](array)
-            for i = 0, V.N do
-                a:__dtor()
-                a = a + 1
+    if eltype:isstruct() then
+        addmissingdtor(eltype)
+        if eltype.methods.__dtor then
+            return terra(array : &V)
+                for i = 0, V.N do
+                    (@array)[i]:__dtor()
+                end
             end
         end
     end

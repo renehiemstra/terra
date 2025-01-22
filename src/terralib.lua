@@ -2826,13 +2826,18 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
 
     local function checkraiiinit(anchor, receiver)
         local typ = receiver.type
-        if typ:isstruct() then
-            return checkraiimethodwithreceiver(anchor, receiver, "__init")
-        elseif typ:isarray() then
-            local init = terralib.ext.addmissing.arrayinitializer(typ)
-            if init then
-                local f = asterraexpression(anchor, init, "luaobject")
-                return checkcall(anchor, List{f}, List{receiver}, "all", true, "expression")
+        if typ:isstruct() or typ:isarray() then
+            if receiver:is "allocvar" then
+                receiver = newobject(anchor,T.var,receiver.name,receiver.symbol):setlvalue(true):withtype(receiver.type)
+            end
+            if typ:isstruct() then
+                return checkraiimethodwithreceiver(anchor, receiver, "__init")
+            elseif typ:isarray() then
+                local init = terralib.ext.addmissing.arrayinitializer(typ)
+                if init then
+                    local f = asterraexpression(anchor, init, "luaobject")
+                    return checkcall(anchor, List{f}, List{receiver}, "all", true, "expression")
+                end
             end
         end
     end
@@ -2852,6 +2857,7 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
 
     local function checkraiidtor(anchor, receiver)
         local typ = receiver.type
+        assert(receiver:is "var") --sanity check
         if typ:isstruct() then
             return checkraiimethodwithreceiver(anchor, receiver, "__dtor")
         elseif typ:isarray() then
