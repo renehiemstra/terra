@@ -87,7 +87,7 @@ function addmissinginit(T)
             end
             --flag that denotes that '__init' was generated rather than
             --implemented by the user
-            T.methods.__init_generated = true
+            T.__init_generated = true
         end
     end
 end
@@ -134,7 +134,7 @@ function addmissingdtor(T)
         return quote end
     end)
     if T:isstruct() then
-        if not T.methods.__dtor and not T.methods.__dtor_generated then
+        if not T.methods.__dtor and not T.__dtor_generated then
             local imp = terra(self : &T)
                 escape
                     for i,e in ipairs(T:getentries()) do
@@ -146,7 +146,7 @@ function addmissingdtor(T)
             end
             --the following flag will signal that addmissingdtor(T) will not
             --attempt to generate 'T.methods.__dtor' twice
-            T.methods.__dtor_generated = true
+            T.__dtor_generated = true
             --if non-trivial destructor code was actually generated then
             --set assign the implementation to '__dtor'
             if generated then
@@ -195,7 +195,7 @@ function addmissingmove(T)
     end)
 
     if T:isstruct() and ismanaged(T) then
-        if not T.methods.__move and not T.methods.__move_generated then
+        if not T.methods.__move and not T.__move_generated then
             if hasmanagedfields(T) then
                 T.methods.__move = terra(from : &T, to : &T)
                     escape
@@ -229,7 +229,7 @@ function addmissingmove(T)
             end
             --the following flag will signal that addmissingmove(T) will not
             --attempt to generate 'T.methods.__move' twice
-            T.methods.__move_generated = true
+            T.__move_generated = true
         end
     end
 end
@@ -267,7 +267,7 @@ function addmissingcopy(T)
     end)
 
     if T:isstruct() and ismanaged(T) then
-        if not T.methods.__copy and not T.methods.__copy_generated then
+        if not T.methods.__copy and not T.__copy_generated then
             if hasmanagedfields(T) then
                 T.methods.__copy = terra(from : &T, to : &T)
                     escape
@@ -289,7 +289,7 @@ function addmissingcopy(T)
             end
             --the following flag will signal that addmissingcopy(T) will not
             --attempt to generate 'T.methods.__copy' twice
-            T.methods.__copy_generated = true
+            T.__copy_generated = true
         end
     end
 end

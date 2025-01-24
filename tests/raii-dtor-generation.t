@@ -17,7 +17,7 @@ printtestheader("raii-dtor-generation.t - testing __dtor generation")
 
 terralib.ext.addmissing.__dtor(A)
 test.eq(A.methods.__dtor, nil)
-test.eq(A.methods.__dtor_generated, true)
+test.eq(A.__dtor_generated, true)
 
 terra A:__dtor()
     self.data = -1
