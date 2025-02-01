@@ -171,3 +171,18 @@ end
 test.eq(main4(), 0)
 test.eq(getndestructorcalls(), 4)
 
+
+printtestheader("raii-dtor.t - testing tuple destructor")
+--tuples are just structs, so this should work without any
+--special work
+
+local S = tuple(A, A)
+
+terra main5()
+    ndestructorcalls = 0
+    var a : S
+    return getndestructorcalls()
+end
+test.eq(main5(), 0)
+test.eq(getndestructorcalls(), 2)
+
