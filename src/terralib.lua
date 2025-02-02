@@ -2934,8 +2934,7 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
             local queue = env:queue()
             if queue and #queue > 0 then
                 --call destructor in reverse order of object creation
-                for i = #queue, 1, -1 do
-                    local name = queue[i]
+                for _,name in ipairs(queue) do
                     local sym = lenv[name]
                     placedestructorcall(name, sym)
                 end
