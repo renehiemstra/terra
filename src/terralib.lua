@@ -294,10 +294,13 @@ terra.environment.__index = terra.environment
 
 function terra.environment:enterblock()
     local e = {}
+    local q = {}
     self._localenv = setmetatable(e,{ __index = self._localenv })
+    self._queue = setmetatable(q,{ __index = self._queue })
 end
 function terra.environment:leaveblock()
     self._localenv = getmetatable(self._localenv).__index
+    self._queue = getmetatable(self._queue).__index
 end
 function terra.environment:localenv()
     return self._localenv
@@ -308,8 +311,8 @@ end
 function terra.environment:combinedenv()
     return self._combinedenv
 end
-function terra.environment:cumulenv()
-    return self._cumulenv
+function terra.environment:queue()
+    return self._queue
 end
 
 function terra.newenvironment(_luaenv)
@@ -323,6 +326,7 @@ function terra.newenvironment(_luaenv)
             error("cannot define global variables or assign to upvalues in an escape")
         end;
     })
+    self._queue = List()
     self:enterblock()
     return self
 end
@@ -2926,8 +2930,15 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
         end
         --add destructor calls for variables local to current scope
         local function clearcurrentscope()
-            for name,sym in pairs(env:localenv()) do
-                placedestructorcall(name, sym)
+            local lenv = env:localenv()
+            local queue = env:queue()
+            if queue and #queue > 0 then
+                --call destructor in reverse order of object creation
+                for i = #queue, 1, -1 do
+                    local name = queue[i]
+                    local sym = lenv[name]
+                    placedestructorcall(name, sym)
+                end
             end
         end
         --add destructor calls for variables from all outer scopes
@@ -2948,22 +2959,26 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
                 --if this is a return statement then clear all remaining managed variables from outer
                 --scopes before the return
                 local savedlocalenv = env._localenv
+                local savedenvqueue = env._queue
                 clearouterscopes()
                 --would have been nicer to use 'env:leaveblock()' followed by 'env:enterblock()' but
                 --unfortunately this has side effects once you go to scopedepth zero. so we just
                 --save the local environment and reset it now that we are done.
                 env._localenv = savedlocalenv
+                env._queue = savedenvqueue
             elseif rstat:is "breakstat" then
                 --we've already cleaned up the managed variables corresponding to the current scope.
                 --now we still need to clean up the managed variables of the outer scope, which is
                 --the loop that we leave using the 'break' statement.
                 local savedlocalenv = env._localenv
+                local savedenvqueue = env._queue
                 env:leaveblock()
                 clearcurrentscope()
                 --would have been nicer to use 'env:leaveblock()' followed by 'env:enterblock()' but
                 --unfortunately this has side effects once you go to scopedepth zero. so we just
                 --save the local environment and reset it now that we are done.
                 env._localenv = savedlocalenv
+                env._queue = savedenvqueue
             end
         end
         return stats
@@ -3507,10 +3522,12 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
         for i,p in ipairs(evalparams) do
             if p.isnamed then
                 local lenv = env:localenv()
+                local queue = env:queue()
                 if rawget(lenv,p.name) then
                     diag:reporterror(p,"duplicate definition of variable ",p.name)
                 end
                 lenv[p.name] = p.symbol
+                queue[#queue+1] = p.name
             end
             local r = newobject(p,T.allocvar,p.name,p.symbol)
             if p.type then
