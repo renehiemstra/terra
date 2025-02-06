@@ -312,6 +312,24 @@ local function addmissingforward(T)
     end
 end
 
+local function addmissingrangefor(Range)
+    --check that a range-type is passed
+    assert(Range:isstruct() and Range.convertible == "range")
+
+    --add the __for-loop
+    Range.metamethods.__for = function(iter, body)
+        return quote
+            var it = iter
+            var v = it.a
+            while v < it.b do
+                 [body(v)]
+                 v = v + it.step
+            end
+        end
+    end
+
+end
+
 --add definitions such that we can access them from terralib
 terralib.ext = {
     addmissing = {
@@ -321,6 +339,7 @@ terralib.ext = {
         __move = addmissingmove,
         __forward = addmissingforward,
         arraydestructor = generatearraydestructor,
-        arrayinitializer = generatearrayinitializer
+        arrayinitializer = generatearrayinitializer,
+        __for = addmissingrangefor
     }
 }

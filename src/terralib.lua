@@ -1795,6 +1795,32 @@ do
         t:setconvertible("tuple")
         return t
     end)
+
+    types.range = memoizefunction(function(t)
+        local range = types.newstruct()
+        if not types.istype(t) then
+            error("expected a type but found "..type(t))
+        end
+        if not t:isarithmetic() then
+            error("expected an arithmetic (integer or floating point) type but found "..type(t))
+        end
+        --add range entries
+        range.entries:insert {"a", t}
+        range.entries:insert {"b", t}
+        range.entries:insert {"step", t}
+        --signal that special struct is a range
+        range:setconvertible("range")
+        --typename, which is used in printstatements
+        range.metamethods.__typename = function(self)
+            return mkstring(List{t},"range{",",","}")
+        end
+        --add missing __for loop metamethod
+        if terralib.ext then
+            terralib.ext.addmissing.__for(range)
+        end
+        return range
+    end)
+
     local getuniquestructname = uniquenameset("$")
     function types.newstruct(displayname,depth)
         displayname = displayname or "anon"
@@ -2556,6 +2582,38 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
         return ee:copy {operands = List {cond,l,r}}:withtype(t)
     end
 
+    local function checkrange(ee)
+        assert(#ee.operands == 2)
+        local a = checkexp(ee.operands[1])
+        local b = checkexp(ee.operands[2])
+        local s
+        local typ
+        if a.type.convertible == "range" and b.type:isarithmetic() then
+            s = a.expressions[2]
+            a = a.expressions[1]
+            typ = a.type
+            if typ ~= b.type or typ ~= s.type then
+                error("range constructor types are not equal.");
+            end
+        elseif a.type:isarithmetic() and b.type:isarithmetic() then
+            typ = a.type
+            if typ ~= b.type then
+                error("range constructor types are not equal.");
+            end
+            if typ:isintegral() then
+                s = newobject(ee, T.constant, ffi.cast('int', 1), typ)
+            elseif typ:isfloat() then
+                s = newobject(ee, T.constant, ffi.cast('double', 1), typ)
+            else
+                error("expected an arithmetic (integer or floating point) type but found "..type(typ))
+            end
+        else
+            error("range constructor expects arithmetic (integer or floating point) types.")
+        end
+        local range_t = terra.types.range(typ):complete()
+        return newobject(ee,T.constructor,List{a, b, s}):withtype(range_t)
+    end
+
     local operator_table = {
         ["-"] = { checkarithpointer, "__sub", "__unm" };
         ["+"] = { checkarithpointer, "__add" };
@@ -2588,6 +2646,8 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
             local e = ensurelvalue(checkexp(ee.operands[1]))
             local ty = terra.types.pointer(e.type)
             return ee:copy { operands = List {e} }:withtype(ty)
+        elseif op_string == ":" then
+            return checkrange(ee)
         end
     
         local op, genericoverloadmethod, unaryoverloadmethod = unpack(operator_table[op_string] or {})

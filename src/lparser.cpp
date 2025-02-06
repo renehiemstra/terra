@@ -1131,6 +1131,7 @@ typedef enum BinOpr {
     OPR_AND,
     OPR_OR,
     OPR_FUNC_PTR,
+    OPR_COLON,
     OPR_NOBINOPR
 } BinOpr;
 
@@ -1174,6 +1175,8 @@ static BinOpr getbinopr(int op) {
             return OPR_MOD;
         case '^':
             return OPR_POW;
+        case ':':
+            return OPR_COLON;
         case TK_CONCAT:
             return OPR_CONCAT;
         case TK_NE:
@@ -1236,7 +1239,8 @@ static const struct {
         {3, 3},   {3, 3}, {3, 3},                 /* ==, <, <= */
         {3, 3},   {3, 3}, {3, 3},                 /* ~=, >, >= */
         {2, 2},   {1, 1},                         /* and, or */
-        {3, 2}                                    /* function pointer*/
+        {3, 2},                                   /* function pointer*/
+        {7, 7}                                    /* : */
 };
 
 #define UNARY_PRIORITY 9 /* priority for unary operators */
