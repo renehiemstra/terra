@@ -912,7 +912,7 @@ static void primaryexp(LexState *ls) {
                 luaX_next(ls);
                 int nexttoken = luaX_lookahead(ls);
                 // method call
-                if (nexttoken == '(' || nexttoken == TK_NAME) {
+                if (nexttoken == '(' || nexttoken == TK_NAME || nexttoken == TK_STRING) {
                     RETURNS_1(checksymbol(ls, NULL));
                     RETURNS_1(funcargs(ls, line));
                     new_object(ls, "method", 3, &p);
