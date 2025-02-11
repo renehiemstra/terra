@@ -816,6 +816,36 @@ static void funcargs(LexState *ls, int line) {
 ** =======================================================================
 */
 
+// buf should be at least 128 chars
+static void number_type(LexState *ls, int flags, char *buf, size_t bufsiz) {
+    if (ls->in_terra) {
+        if (flags & F_ISINTEGER) {
+            const char *sign = (flags & F_ISUNSIGNED) ? "u" : "";
+            const char *sz = (flags & F_IS8BYTES) ? "64" : "";
+            snprintf(buf, bufsiz, "%sint%s", sign, sz);
+        } else {
+            snprintf(buf, bufsiz, "%s", (flags & F_IS8BYTES) ? "double" : "float");
+        }
+    }
+}
+
+static void push_number(LexState *ls) {
+    char buf[128];
+    int flags = ls->t.seminfo.flags;
+    number_type(ls, flags, &buf[0], sizeof(buf));
+    if (flags & F_ISINTEGER) {
+        push_integer(ls, ls->t.seminfo.i);
+        push_literal(ls, buf);
+        snprintf(buf, sizeof(buf), "%" PRIu64, ls->t.seminfo.i);
+        push_string(ls, buf);
+        add_field(ls, -2, "stringvalue");
+    } else {
+        push_double(ls, ls->t.seminfo.r);
+        push_literal(ls, buf);
+    }
+    luaX_next(ls);
+}
+
 static void prefixexp(LexState *ls) {
     /* prefixexp -> NAME | '(' expr ')' */
 
@@ -837,6 +867,10 @@ static void prefixexp(LexState *ls) {
         }
         case TK_NAME: {
             RETURNS_1(singlevar(ls));
+            return;
+        }
+        case TK_NUMBER: {
+            RETURNS_1(push_number(ls));
             return;
         }
         default: {
@@ -876,9 +910,27 @@ static void primaryexp(LexState *ls) {
             }
             case ':': { /* `:' NAME funcargs */
                 luaX_next(ls);
-                RETURNS_1(checksymbol(ls, NULL));
-                RETURNS_1(funcargs(ls, line));
-                new_object(ls, "method", 3, &p);
+                int nexttoken = luaX_lookahead(ls);
+                // method call
+                if (nexttoken == '(' || nexttoken == TK_NAME) {
+                    RETURNS_1(checksymbol(ls, NULL));
+                    RETURNS_1(funcargs(ls, line));
+                    new_object(ls, "method", 3, &p);
+                }
+                // construct a range
+                else {
+                    RETURNS_1(prefixexp(ls));
+                    // three-argument range: `a' `:' `step' `:' `b'
+                    if (nexttoken == ':') {
+                        luaX_next(ls);
+                        RETURNS_1(prefixexp(ls));
+                        new_object(ls, "range", 3, &p);
+                    }
+                    // two-argument range: `a' `:' `b'
+                    else {
+                        new_object(ls, "range", 2, &p);
+                    }
+                }
                 break;
             }
             case '(':
@@ -960,19 +1012,6 @@ static void doquote(LexState *ls, int isexp) {
     leaveterra(ls);
 }
 
-// buf should be at least 128 chars
-static void number_type(LexState *ls, int flags, char *buf, size_t bufsiz) {
-    if (ls->in_terra) {
-        if (flags & F_ISINTEGER) {
-            const char *sign = (flags & F_ISUNSIGNED) ? "u" : "";
-            const char *sz = (flags & F_IS8BYTES) ? "64" : "";
-            snprintf(buf, bufsiz, "%sint%s", sign, sz);
-        } else {
-            snprintf(buf, bufsiz, "%s", (flags & F_IS8BYTES) ? "double" : "float");
-        }
-    }
-}
-
 static void blockescape(LexState *ls) {
     check_terra(ls, "escape");
     int line = ls->linenumber;
@@ -995,21 +1034,13 @@ static void simpleexp(LexState *ls) {
                     constructor | FUNCTION body | primaryexp */
     switch (ls->t.token) {
         case TK_NUMBER: {
-            char buf[128];
-            int flags = ls->t.seminfo.flags;
-            number_type(ls, flags, &buf[0], sizeof(buf));
-            if (flags & F_ISINTEGER) {
-                push_integer(ls, ls->t.seminfo.i);
-                push_literal(ls, buf);
-                snprintf(buf, sizeof(buf), "%" PRIu64, ls->t.seminfo.i);
-                push_string(ls, buf);
-                add_field(ls, -2, "stringvalue");
-
-            } else {
-                push_double(ls, ls->t.seminfo.r);
-                push_literal(ls, buf);
+            if (luaX_lookahead(ls) == ':') {
+                primaryexp(ls);
             }
-            break;
+            else {
+                push_number(ls);
+            }
+            return;
         }
         case TK_STRING: {
             push_string(ls, ls->t.seminfo.ts);

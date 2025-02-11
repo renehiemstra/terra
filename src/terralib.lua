@@ -70,6 +70,7 @@ tree =
      | constructoru(field* records) #untyped version
      | selectu(tree value, ident field) #untyped version
      | method(tree value,ident name,tree* arguments) 
+     | range(tree a, tree s, tree? b)
      | statlist(tree* statements)
      | fornumu(param variable, tree initial, tree limit, tree? step,block body) #untyped version
      | defvar(param* variables,  boolean hasinit, tree* initializers)
@@ -1795,6 +1796,24 @@ do
         t:setconvertible("tuple")
         return t
     end)
+
+    types.range = memoizefunction(function(t, args)
+        --check input type
+        if not terralib.ext then
+            error("ranges require \"terralibext.t\".")
+        end
+        if not types.istype(t) or not t:isarithmetic() then
+            error("expected an arithmetic (integer or floating point) type but found "..type(t))
+        end
+        --create range object
+        local range = types.newstruct()
+        range:setconvertible("range")
+        range.traits = {eltype = t}
+        --add missing implementation
+        terralib.ext.addmissing.__range(range, args)
+        return range
+    end)
+
     local getuniquestructname = uniquenameset("$")
     function types.newstruct(displayname,depth)
         displayname = displayname or "anon"
@@ -2616,6 +2635,49 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
         return op(ee,operands)
     end
 
+    local function checkrange(e)
+        local a, b, step = checkexp(e.a), e.b and  checkexp(e.b), checkexp(e.s)
+        local typ = a.type
+        --check element type of range constructor
+        if not typ:isarithmetic() then
+            error("range constructor expects arithmetic (integer or floating point) types.")
+        end
+        if not b then
+            b, step = step, 1
+            if not (typ == b.type) then
+                error("range constructor types are not equal.");
+            end
+        else
+            if not (typ == b.type and typ == step.type) then
+                error("range constructor types are not equal.");
+            end
+        end
+        --prepare range-struct and its arguments
+        local parameters = List()
+        local args = {}
+        --extract hardcoded literal values passed by user
+        if a:is "literal" and type(a.value) == "userdata" then
+            args.a = tonumber(ffi.cast("uint64_t *",a.value)[0])
+        else
+            parameters:insert(a)
+        end
+        if b:is "literal" and type(b.value) == "userdata" then
+            args.b = tonumber(ffi.cast("uint64_t *",b.value)[0])
+        else
+            parameters:insert(b)
+        end
+        --select hardcoded step
+        if step == 1 then
+            args.step = 1
+        elseif step:is "literal" and type(step.value) == "userdata" then
+            args.step = tonumber(ffi.cast("uint64_t *",step.value)[0])
+        else
+            parameters:insert(step)
+        end
+        local range_t = terra.types.range(typ, args):complete()
+        return newobject(e, T.constructor, parameters):withtype(range_t)
+    end
+
     --functions to handle typecheck invocations (functions,methods,macros,operator overloads)
     local function removeluaobject(e)
         if not e:is "luaobject" or e.type == terra.types.error then 
@@ -3329,6 +3391,8 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
                     end
                 end
                 return e:copy { value = v, index = idx }:withtype(typ):setlvalue(lvalue)
+            elseif e:is "range" then
+                return checkrange(e)
             elseif e:is "sizeof" then
                 e.oftype:tcomplete(e)
                 return e:copy{}:withtype(terra.types.uint64)
@@ -4030,11 +4094,11 @@ function terra.includecstring(code,cargs,target)
     	args:insert(path)
     end
     -- Obey the SDKROOT variable on macOS to match Clang behavior.
-    local sdkroot = os.getenv("SDKROOT")
-    if sdkroot then
-        args:insert("-isysroot")
-        args:insert(sdkroot)
-    end
+    --local sdkroot = os.getenv("SDKROOT")
+    --if sdkroot then
+    --    args:insert("-isysroot")
+    --    args:insert(sdkroot)
+    --end
     -- Set GNU C version to match value set by Clang: https://github.com/llvm/llvm-project/blob/f77c948d56b09b839262e258af5c6ad701e5b168/clang/lib/Driver/ToolChains/Clang.cpp#L5750-L5753
     if ffi.os ~= "Windows" and terralib.llvm_version >= 100 then
       args:insert("-fgnuc-version=4.2.1")

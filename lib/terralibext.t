@@ -312,6 +312,71 @@ local function addmissingforward(T)
     end
 end
 
+
+local size_t = uint64
+
+local function addmissingrangefor(Range, args)
+    --check that a range-type is passed
+    assert(Range:isstruct() and Range.convertible == "range")
+    --get element type
+    local T = Range.traits.eltype
+    --optional input is static or dynamic
+    local a = args and args.a
+    local b = args and args.b
+    local step = args and args.step
+    Range.metamethods.__entrymissing = macro(function(entryname, self)
+        if a and entryname == "a" then
+            return `a
+        elseif b and entryname == "b" then
+            return `b
+        elseif step and entryname == "step" then
+            return `step
+        end
+    end)
+    --add static / dynamic data entries
+    if a then Range.a = a else Range.entries:insert {"a", T} end
+    if b then Range.b = b else Range.entries:insert {"b", T} end
+    if step then Range.step = step else Range.entries:insert {"step", T} end
+    --add static / dynamic methods
+    if a and b and step then
+        Range.traits.length = math.ceil((b - a) / step)
+        terra Range:length() return [Range.traits.length] end
+    else
+        terra Range:length()
+            return [size_t]((self.b-self.a) / self.step)
+        end
+    end
+    --pretty print name
+    local s = terralib.newlist()
+    if a then s:insert(("a=%s"):format(tostring(a))) end
+    if b then s:insert(("b=%s"):format(tostring(b))) end
+    if step then s:insert(("step=%s"):format(tostring(step))) end
+    local name = ("range{%s}"):format(tostring(T))
+    if #s > 0 then
+        name = name .. "(" .. table.concat(s, ", ") ..")"
+    end
+    Range.metamethods.__typename = function(self)
+        return name
+    end
+
+    --add the __for-loop
+    Range.metamethods.__for = function(iter, body)
+        return quote
+            var it = iter
+            var v = it.a
+            while v < it.b do
+                 [body(v)]
+                 v = v + it.step
+            end
+        end
+    end
+    --linear mapping from index to range(i)
+    Range.metamethods.__apply = macro(function(self, i)
+        return `self.a + self.step * i
+    end)
+
+end
+
 --add definitions such that we can access them from terralib
 terralib.ext = {
     addmissing = {
@@ -321,6 +386,7 @@ terralib.ext = {
         __move = addmissingmove,
         __forward = addmissingforward,
         arraydestructor = generatearraydestructor,
-        arrayinitializer = generatearrayinitializer
+        arrayinitializer = generatearrayinitializer,
+        __range = addmissingrangefor
     }
 }
