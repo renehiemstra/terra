@@ -3652,15 +3652,19 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
         for i,v in ipairs(regular.lhs) do
             local r = regular.rhs[i]
             local rhstype = r and r.type or terra.types.error
-            if r and r:is "structcast" and #r.entries < #rhstype.entries and ismanaged(r, "__init") then
+            --take care of (partial) initialization of managed variables using constructors
+            if r and r:is "structcast" and r.expression:is "constructor" and ismanaged(r, "__init") then
                 --allocate variable
                 if v:is "allocvar" then
                     v:settype(rhstype)
                     stmts:insert(v)
                     v = newobject(anchor,T.var,v.name,v.symbol):setlvalue(true):withtype(r.type)
-                    local ini = checkraiiinit(anchor, v)
-                    if ini then
-                        stmts:insert(ini)
+                    --only initialize 'v' in case of partial initialization using the structcast
+                    if #r.entries < #rhstype.entries then
+                        local ini = checkraiiinit(anchor, v)
+                        if ini then
+                            stmts:insert(ini)
+                        end
                     end
                 end
                 ensurelvalue(v)
@@ -3671,9 +3675,13 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
                     local myentry = layout.entries[entry.index+1]
                     local vselected = insertselect(v,myentry.key)
                     local rselected = r.expression.expressions[i]
-                    stmts:insert(createassignment(v, List{vselected}, List{rselected}))
+                    local assignment = createassignment(v, List{vselected}, List{rselected})
+                    if assignment and assignment:is "letin" and assignment.hasstatements and #assignment.expressions==0 then
+                        stmts:insertall(assignment.statements)
+                    else
+                        stmts:insert(assignment)
+                    end
                 end
-                --we've handled assignment 'i', so we remove it from the list.
                 regular.lhs[i] = nil
                 regular.rhs[i] = nil
             else
@@ -3710,7 +3718,10 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
             local rhstype = byfcall.rhs[i] and byfcall.rhs[i].type or terra.types.error
             if v:is "setteru" then
                 local rv,r = allocvar(v,rhstype,"<rhs>")
-                stmts:insert(checkraiicopyassignment(anchor, byfcall.rhs[i], r))
+                local copyassignment = checkraiicopyassignment(anchor, byfcall.rhs[i], r)
+                if copyassignment then
+                    stmts:insert(checkraiicopyassignment(anchor, byfcall.rhs[i], r))
+                end
                 stmts:insert(newobject(v,T.setter, rv, v.setter(r)))
             elseif v:is "allocvar" then
                 if not v.type then
@@ -3723,9 +3734,19 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
                 end
                 local r = byfcall.rhs[i]
                 if r.assignment == "move" then
-                    stmts:insert(checkraiimoveassignment(anchor, r, v))
+                    local moveassignment = checkraiimoveassignment(anchor, r, v)
+                    if moveassignment then
+                        stmts:insert(moveassignment)
+                    else
+                        diag:reporterror(anchor, "variable cannot be moved from.")
+                    end
                 else
-                    stmts:insert(checkraiicopyassignment(anchor, r, v))
+                    local copyassignment = checkraiicopyassignment(anchor, r, v)
+                    if copyassignment then
+                        stmts:insert(checkraiicopyassignment(anchor, r, v))
+                    else
+                        diag:reporterror(anchor, "variable cannot be copied.")
+                    end
                 end
             else
                 ensurelvalue(v)
@@ -3733,9 +3754,19 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
                 --hands of the programmer
                 local r = byfcall.rhs[i]
                 if r.assignment == "move" then
-                    stmts:insert(checkraiimoveassignment(anchor, r, v))
+                    local moveassignment = checkraiimoveassignment(anchor, r, v)
+                    if moveassignment then
+                        stmts:insert(moveassignment)
+                    else
+                        diag:reporterror(anchor, "variable cannot be moved from.")
+                    end
                 else
-                    stmts:insert(checkraiicopyassignment(anchor, r, v))
+                    local copyassignment = checkraiicopyassignment(anchor, r, v)
+                    if copyassignment then
+                        stmts:insert(checkraiicopyassignment(anchor, r, v))
+                    else
+                        diag:reporterror(anchor, "variable cannot be copied.")
+                    end
                 end
             end
         end
@@ -4057,11 +4088,11 @@ function terra.includecstring(code,cargs,target)
     	args:insert(path)
     end
     -- Obey the SDKROOT variable on macOS to match Clang behavior.
-    local sdkroot = os.getenv("SDKROOT")
-    if sdkroot then
-        args:insert("-isysroot")
-        args:insert(sdkroot)
-    end
+    --local sdkroot = os.getenv("SDKROOT")
+    --if sdkroot then
+    --    args:insert("-isysroot")
+    --    args:insert(sdkroot)
+    --end
     -- Set GNU C version to match value set by Clang: https://github.com/llvm/llvm-project/blob/f77c948d56b09b839262e258af5c6ad701e5b168/clang/lib/Driver/ToolChains/Clang.cpp#L5750-L5753
     if ffi.os ~= "Windows" and terralib.llvm_version >= 100 then
       args:insert("-fgnuc-version=4.2.1")
