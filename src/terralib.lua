@@ -2989,7 +2989,7 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
         if from:is "operator" and #from.operands==1 then
             from = from.operands[1]
         end
-        if from:is "apply" or from:is "returnstat" or from:is "operator" or from:is "letin" then
+        if from:is "structcast" or from:is "apply" or from:is "returnstat" or from:is "operator" or from:is "letin" then
             return false
         else
             return true
@@ -3650,31 +3650,58 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
         regular.rhs = insertcasts(anchor, vtypes, regular.rhs)
         --take care of regular assignments of managed variables
         for i,v in ipairs(regular.lhs) do
-            local rhstype = regular.rhs[i] and regular.rhs[i].type or terra.types.error
-            if v:is "setteru" then
-                local rv,r = allocvar(v,rhstype,"<rhs>")
-                regular.lhs[i] = newobject(v,T.setter, rv,v.setter(r))
-            elseif v:is "allocvar" then
-                v:settype(rhstype)
-            else
-                ensurelvalue(v)
-                --if 'v' is a managed variable then
-                --(1) var tmp = v       --store v in tmp
-                --(2) v = rhs[i]        --perform assignment
-                --(3) tmp:__dtor()      --delete old v
-                --the temporary is necessary because rhs[i] may involve a function of 'v'
-                if ismanaged(v, "__dtor") then
-                    --To avoid unwanted deletions we prohibit assignments that may involve something
-                    --like a swap: u,v = v, u.
-                    --for now we prohibit this by limiting assignments to a single one
-                    if #regular.lhs>1 then
-                        diag:reporterror(anchor, "assignments of managed objects is not supported for tuples.")
+            local r = regular.rhs[i]
+            local rhstype = r and r.type or terra.types.error
+            if r and r:is "structcast" and #r.entries < #rhstype.entries and ismanaged(r, "__init") then
+                --allocate variable
+                if v:is "allocvar" then
+                    v:settype(rhstype)
+                    stmts:insert(v)
+                    v = newobject(anchor,T.var,v.name,v.symbol):setlvalue(true):withtype(r.type)
+                    local ini = checkraiiinit(anchor, v)
+                    if ini then
+                        stmts:insert(ini)
                     end
-                    local tmpa, tmp = allocvar(v, v.type,"<tmp>")
-                    --store v in tmp
-                    stmts:insert(newobject(anchor,T.assignment, List{tmpa}, List{v}))
-                    --call tmp:__dtor()
-                    post:insert(checkraiimethodwithreceiver(anchor, tmp, "__dtor"))
+                end
+                ensurelvalue(v)
+                --update lhs
+                local layout = rhstype:getlayout(v)
+                regular.lhs[i] = v
+                for i,entry in ipairs(r.entries) do
+                    local myentry = layout.entries[entry.index+1]
+                    local vselected = insertselect(v,myentry.key)
+                    local rselected = r.expression.expressions[i]
+                    stmts:insert(createassignment(v, List{vselected}, List{rselected}))
+                end
+                --we've handled assignment 'i', so we remove it from the list.
+                regular.lhs[i] = nil
+                regular.rhs[i] = nil
+            else
+                if v:is "setteru" then
+                    local rv,r = allocvar(v,rhstype,"<rhs>")
+                    regular.lhs[i] = newobject(v,T.setter, rv,v.setter(r))
+                elseif v:is "allocvar" then
+                    v:settype(rhstype)
+                else
+                    ensurelvalue(v)
+                    --if 'v' is a managed variable then
+                    --(1) var tmp = v       --store v in tmp
+                    --(2) v = rhs[i]        --perform assignment
+                    --(3) tmp:__dtor()      --delete old v
+                    --the temporary is necessary because rhs[i] may involve a function of 'v'
+                    if ismanaged(v, "__dtor") then
+                        --To avoid unwanted deletions we prohibit assignments that may involve something
+                        --like a swap: u,v = v, u.
+                        --for now we prohibit this by limiting assignments to a single one
+                        if #regular.lhs>1 then
+                            diag:reporterror(anchor, "assignments of managed objects is not supported for tuples.")
+                        end
+                        local tmpa, tmp = allocvar(v, v.type,"<tmp>")
+                        --store v in tmp
+                        stmts:insert(newobject(anchor,T.assignment, List{tmpa}, List{v}))
+                        --call tmp:__dtor()
+                        post:insert(checkraiimethodwithreceiver(anchor, tmp, "__dtor"))
+                    end
                 end
             end
         end
