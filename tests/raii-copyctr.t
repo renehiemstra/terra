@@ -60,8 +60,9 @@ struct B{
 
 terra test2()
     var a : A           --__init -> a.data = 1
-    var b = B{a}        --__init + __copy -> b.data.data = 2
-    return b.data.data
+    var b = B{a}        --__init + regular assignment --> b.data.data = 1
+    var c = b           -- __copy --> c.data.data = b.data.data + 1
+    return c.data.data
 end
 test.eq(test2(), 2)
 

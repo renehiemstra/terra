@@ -126,5 +126,4 @@ terra testreturnfromfun2()
     var a, b = returntwo()
     return a.data * b.data
 end
-print(testreturnfromfun2())
 test.eq(testreturnfromfun2(), 20)

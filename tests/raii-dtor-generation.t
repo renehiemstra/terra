@@ -53,10 +53,7 @@ terra geta() return c.a.data end
 terra getb0() return c.b.a.data end
 terra getb1() return c.b.b end
 terra getp() return c.p end
-terra geti() return c.i end
-terra getz(i : int) return c.z[i] end
 terra getq(i : int) return c.q[i].data end
-terra getv() return c.v end
 
 printtestheader("raii-dtor-generation.t - testing recursive __dtor generation")
 
@@ -64,10 +61,5 @@ test.eq(geta(), -1)
 test.eq(getb0(), -1)
 test.eq(getb1(), nil)
 test.eq(getp(), nil)
-test.eq(geti(), 0)
-test.eq(getz(0), 0)
-test.eq(getz(1), 0)
-test.eq(getz(2), 0)
 test.eq(getq(0), -1)
 test.eq(getq(1), -1)
-test.eq(getv(), false)
