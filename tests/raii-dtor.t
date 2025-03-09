@@ -39,6 +39,41 @@ terra A:__dtor()
     ndestructorcalls = ndestructorcalls + 1
 end
 
+printtestheader("raii-dtor.t - testing __dtor pass by value")
+
+terra mytest0(a : A)
+end
+mytest0:printpretty()
+terra main0()
+    ndestructorcalls = 0
+    var a : A
+    mytest0(a)
+    return getndestructorcalls()
+end
+test.eq(main0(), 1)
+test.eq(getndestructorcalls(), 2)
+
+printtestheader("raii-dtor.t - testing __dtor pass by value - 2")
+
+terra mytest1(a : A)
+    while true do
+        if a.data == 2 then
+            break
+        end
+        a.data = a.data + 1
+    end
+end
+mytest1:printpretty()
+terra main1()
+    ndestructorcalls = 0
+    var a : A
+    mytest1(a)
+    return getndestructorcalls()
+end
+main1:printpretty()
+test.eq(main1(), 1)
+test.eq(getndestructorcalls(), 2)
+
 terra mytest(b : A)
     var x : A       --x.data == 1
     if b.data == 10 then

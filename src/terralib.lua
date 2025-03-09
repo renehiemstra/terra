@@ -2971,7 +2971,7 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
             env._queue = savedenvqueue
             env.scopedepth = scopedepth
             --clear remaining input arguments
-        elseif rstat and rstat:is "returnstat" or env.scopedepth == 1 then
+        elseif (rstat and rstat:is "returnstat") or (env.scopedepth==0 or env.scopedepth==1) then
             --we've already cleaned up the managed variables corresponding to the current scope.
             --if this is a return statement then clear all remaining managed variables from outer
             --scopes before the return
