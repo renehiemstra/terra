@@ -295,10 +295,12 @@ terra.environment.__index = terra.environment
 function terra.environment:enterblock()
     local e = {}
     local q = {}
+    self.scopedepth = self.scopedepth + 1
     self._localenv = setmetatable(e,{ __index = self._localenv })
     self._queue = setmetatable(q,{ __index = self._queue })
 end
 function terra.environment:leaveblock()
+    self.scopedepth = self.scopedepth - 1
     self._localenv = getmetatable(self._localenv).__index
     self._queue = getmetatable(self._queue).__index
 end
@@ -326,6 +328,7 @@ function terra.newenvironment(_luaenv)
             error("cannot define global variables or assign to upvalues in an escape")
         end;
     })
+    self.scopedepth = -1
     self._queue = List()
     self:enterblock()
     return self
@@ -2951,34 +2954,37 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
         end
         --clear the current scope
         clearcurrentscope()
-        --if a return or break statement clear remaining managed variables
-        if rstat then
-            if rstat:is "returnstat" then
-                --we've already cleaned up the managed variables corresponding to the current scope.
-                --if this is a return statement then clear all remaining managed variables from outer
-                --scopes before the return
-                local savedlocalenv = env._localenv
-                local savedenvqueue = env._queue
-                clearouterscopes()
-                --would have been nicer to use 'env:leaveblock()' followed by 'env:enterblock()' but
-                --unfortunately this has side effects once you go to scopedepth zero. so we just
-                --save the local environment and reset it now that we are done.
-                env._localenv = savedlocalenv
-                env._queue = savedenvqueue
-            elseif rstat:is "breakstat" then
-                --we've already cleaned up the managed variables corresponding to the current scope.
-                --now we still need to clean up the managed variables of the outer scope, which is
-                --the loop that we leave using the 'break' statement.
-                local savedlocalenv = env._localenv
-                local savedenvqueue = env._queue
-                env:leaveblock()
-                clearcurrentscope()
-                --would have been nicer to use 'env:leaveblock()' followed by 'env:enterblock()' but
-                --unfortunately this has side effects once you go to scopedepth zero. so we just
-                --save the local environment and reset it now that we are done.
-                env._localenv = savedlocalenv
-                env._queue = savedenvqueue
-            end
+        --clear remaining variables in a break-statement
+        if rstat and rstat:is "breakstat" then
+            --we've already cleaned up the managed variables corresponding to the current scope.
+            --now we still need to clean up the managed variables of the outer scope, which is
+            --the loop that we leave using the 'break' statement.
+            local savedlocalenv = env._localenv
+            local savedenvqueue = env._queue
+            local scopedepth = env.scopedepth
+            env:leaveblock()
+            clearcurrentscope()
+            --would have been nicer to use 'env:leaveblock()' followed by 'env:enterblock()' but
+            --unfortunately this has side effects once you go to scopedepth zero. so we just
+            --save the local environment and reset it now that we are done.
+            env._localenv = savedlocalenv
+            env._queue = savedenvqueue
+            env.scopedepth = scopedepth
+            --clear remaining input arguments
+        elseif rstat and rstat:is "returnstat" or env.scopedepth == 1 then
+            --we've already cleaned up the managed variables corresponding to the current scope.
+            --if this is a return statement then clear all remaining managed variables from outer
+            --scopes before the return
+            local savedlocalenv = env._localenv
+            local savedenvqueue = env._queue
+            local scopedepth = env.scopedepth
+            clearouterscopes()
+            --would have been nicer to use 'env:leaveblock()' followed by 'env:enterblock()' but
+            --unfortunately this has side effects once you go to scopedepth zero. so we just
+            --save the local environment and reset it now that we are done.
+            env._localenv = savedlocalenv
+            env._queue = savedenvqueue
+            env.scopedepth = scopedepth
         end
         return stats
     end
@@ -4088,11 +4094,11 @@ function terra.includecstring(code,cargs,target)
     	args:insert(path)
     end
     -- Obey the SDKROOT variable on macOS to match Clang behavior.
-    --local sdkroot = os.getenv("SDKROOT")
-    --if sdkroot then
-    --    args:insert("-isysroot")
-    --    args:insert(sdkroot)
-    --end
+    local sdkroot = os.getenv("SDKROOT")
+    if sdkroot then
+        args:insert("-isysroot")
+        args:insert(sdkroot)
+    end
     -- Set GNU C version to match value set by Clang: https://github.com/llvm/llvm-project/blob/f77c948d56b09b839262e258af5c6ad701e5b168/clang/lib/Driver/ToolChains/Clang.cpp#L5750-L5753
     if ffi.os ~= "Windows" and terralib.llvm_version >= 100 then
       args:insert("-fgnuc-version=4.2.1")

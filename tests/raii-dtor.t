@@ -136,21 +136,24 @@ terra main3(v : int)
             var d : A
             --d:__init()
             var e : A
-            --d:__init()
+            --e:__init()
             --defer d:__dtor()
-            --defer d:__dtor()
+            --defer e:__dtor()
             --defer b:__dtor()
             break
         end
         var c : A
         --c:__init()
+        a.data = a.data + 1
         --defer b:__dtor()
         --defer c:__dtor()
-        a.data = a.data + 1
+        --defer a:__dtor()
     end
     --defer a:__dtor()
     return getndestructorcalls()
 end
+
+main3:printpretty()
 
 printtestheader("raii-dtor.t - testing __dtor nested scopes with 'break'")
 
