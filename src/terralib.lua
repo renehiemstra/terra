@@ -3743,15 +3743,11 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
                     local moveassignment = checkraiimoveassignment(anchor, r, v)
                     if moveassignment then
                         stmts:insert(moveassignment)
-                    else
-                        diag:reporterror(anchor, "variable cannot be moved from.")
                     end
                 else
                     local copyassignment = checkraiicopyassignment(anchor, r, v)
                     if copyassignment then
                         stmts:insert(checkraiicopyassignment(anchor, r, v))
-                    else
-                        diag:reporterror(anchor, "variable cannot be copied.")
                     end
                 end
             else
@@ -3763,15 +3759,11 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
                     local moveassignment = checkraiimoveassignment(anchor, r, v)
                     if moveassignment then
                         stmts:insert(moveassignment)
-                    else
-                        diag:reporterror(anchor, "variable cannot be moved from.")
                     end
                 else
                     local copyassignment = checkraiicopyassignment(anchor, r, v)
                     if copyassignment then
                         stmts:insert(checkraiicopyassignment(anchor, r, v))
-                    else
-                        diag:reporterror(anchor, "variable cannot be copied.")
                     end
                 end
             end
