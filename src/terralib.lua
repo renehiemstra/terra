@@ -329,6 +329,7 @@ function terra.newenvironment(_luaenv)
         end;
     })
     self.scopedepth = -1
+    self.isfundef = false --flag to signal type-checked code is a terra function or a let-in block
     self._queue = List()
     self:enterblock()
     return self
@@ -2971,10 +2972,13 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
             env._queue = savedenvqueue
             env.scopedepth = scopedepth
             --clear remaining input arguments
-        elseif (rstat and rstat:is "returnstat") or (env.scopedepth==0 or env.scopedepth==1) then
+        elseif (rstat and rstat:is "returnstat") or (env.isfundef and (env.scopedepth==0 or env.scopedepth==1)) then
             --we've already cleaned up the managed variables corresponding to the current scope.
             --if this is a return statement then clear all remaining managed variables from outer
             --scopes before the return
+            --if this is the outer most scope of a function (env.isfundef and env.scopedepth==1) then clean up all the
+            --remaining variables. The case (env.scopedepth==0) is needed for the corner case of functions that are
+            --empty - that don't do anything, but have variables that are passed by value.
             local savedlocalenv = env._localenv
             local savedenvqueue = env._queue
             local scopedepth = env.scopedepth
@@ -4001,6 +4005,7 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
 
     local result
     if topexp:is "functiondefu" then
+        env.isfundef = true
         local typed_parameters = checkformalparameterlist(topexp.parameters, true)
         local parameter_types = typed_parameters:map("type")
         local body,returntype = checkreturns(checkblock(topexp.body),topexp.returntype)
@@ -4086,11 +4091,11 @@ function terra.includecstring(code,cargs,target)
     	args:insert(path)
     end
     -- Obey the SDKROOT variable on macOS to match Clang behavior.
-    local sdkroot = os.getenv("SDKROOT")
-    if sdkroot then
-        args:insert("-isysroot")
-        args:insert(sdkroot)
-    end
+    --local sdkroot = os.getenv("SDKROOT")
+    --if sdkroot then
+    --    args:insert("-isysroot")
+    --    args:insert(sdkroot)
+    --end
     -- Set GNU C version to match value set by Clang: https://github.com/llvm/llvm-project/blob/f77c948d56b09b839262e258af5c6ad701e5b168/clang/lib/Driver/ToolChains/Clang.cpp#L5750-L5753
     if ffi.os ~= "Windows" and terralib.llvm_version >= 100 then
       args:insert("-fgnuc-version=4.2.1")
