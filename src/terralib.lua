@@ -3080,16 +3080,21 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
     local function checkapply(exp, location)
         if exp.value.name == "__move__" then
             local arguments = checkexpressions(exp.arguments,"luavalue")
+            assert(#arguments == 1, "__move__ takes only a single argument.")
             local v = arguments[1]
-            v:setassignment("move")
+            if ismanaged(v, "__move") then
+                v:setassignment("move")
+            end
             return v
         elseif exp.value.name == "__copy__" then
             local arguments = checkexpressions(exp.arguments,"luavalue")
+            assert(#arguments == 1, "__copy__ takes only a single argument.")
             local v = arguments[1]
             v:setassignment("copy")
             return v
         elseif exp.value.name == "__handle__" then
             local arguments = checkexpressions(exp.arguments,"luavalue")
+            assert(#arguments == 1, "__handle__ takes only a single argument.")
             local v = arguments[1]
             v:setassignment("handle")
             return v
