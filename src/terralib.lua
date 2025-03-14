@@ -2248,36 +2248,43 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
         return av,v
     end
 
-    local checkraiiinit
+    local createassignment, checkraiiinit
 
     function structcast(explicit,exp,typ, speculative)
         local from = exp.type:getlayout(exp)
         local to = typ:getlayout(exp)
 
-        --take care of partial struct initialization
-        if terralib.ext and exp:is "constructor" and #to.entries > #from.entries then
-            local stmts = List{}
-            local exprs = List{}
-            local allocvar, var = allocvar(exp, typ,"<structcast>")
-            --allocate struct variable
-            stmts:insert(allocvar)
-            --insert initializer
-            local ini = checkraiiinit(exp, var)
-            if ini then
-                stmts:insert(ini)
-            end
-            --add unset entries to constructor
-            for i,entry in ipairs(to.entries) do
-                local offset = exp.type.convertible == "tuple" and i - 1 or from.keytoindex[entry.key]
-                if offset then
-                    exprs[i] = exp.expressions[offset+1]
-                else
-                    exprs[i] = insertselect(var,entry.key)
+        --take care of (managed and partial) struct initialization
+        if terralib.ext and exp:is "constructor" then
+            if (#to.entries > #from.entries) or ((#to.entries == #from.entries) and terralib.ext.hasmanagedfields(typ)) then
+                local stmts = List{}
+                local exprs = List{}
+                local allocvar, var = allocvar(exp, typ,"<structcast>")
+                --allocate struct variable
+                stmts:insert(allocvar)
+                --insert initializer
+                local ini = checkraiiinit(exp, var)
+                if ini then
+                    stmts:insert(ini)
                 end
+                --perform (managed) assignments field by field
+                for i,entry in ipairs(from.entries) do
+                    local offset = exp.type.convertible == "tuple" and i - 1 or to.keytoindex[entry.key]
+                    local myentry = to.entries[offset+1]
+                    local vselected = insertselect(var, myentry.key)
+                    local rselected = exp.expressions[i]
+                    local assignment = createassignment(exp, List{vselected}, List{rselected})
+                    if assignment and assignment:is "letin" and assignment.hasstatements and #assignment.expressions==0 then
+                        stmts:insertall(assignment.statements)
+                    else
+                        stmts:insert(assignment)
+                    end
+                end
+                --return variable inside expression block of letin statement
+                exprs:insert(var)
+                --create letin block and perform new structcast
+                return createlet(exp, stmts, exprs, true)
             end
-            --create letin block and perform new structcast
-            local letin = createlet(exp, stmts, exprs, true)
-            return structcast(explicit, letin, typ, speculative)
         end
 
         local valid = true
@@ -3628,7 +3635,7 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
         return false
     end
 
-    local createassignment, createregularassignment
+    local createregularassignment
 
     --try unpack struct and perform pattern match
     local function trystructpatternmatching(anchor, lhs, rhs)

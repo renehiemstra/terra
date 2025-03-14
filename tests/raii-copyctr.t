@@ -19,7 +19,7 @@ end
 
 
 local test = require("test")
-io = terralib.includec("stdio.h")
+local io = terralib.includec("stdio.h")
 
 struct A{
     data : int
@@ -63,6 +63,7 @@ terra test2()
     var b = B{a}        --__init + copy assignment --> b.data.data = 2
     return b.data.data
 end
+test2:printpretty()
 test.eq(test2(), 2)
 
 

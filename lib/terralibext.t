@@ -353,5 +353,7 @@ terralib.ext = {
         __forward = addmissingforward,
         arraydestructor = generatearraydestructor,
         arrayinitializer = generatearrayinitializer
-    }
+    },
+    ismanaged = ismanaged,
+    hasmanagedfields = hasmanagedfields
 }
