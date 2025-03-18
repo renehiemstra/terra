@@ -57,6 +57,7 @@ printtestheader("raii-copyctr.t - copy-construction with generated __ctor")
 struct B{
     data : A
 }
+B.generate_initializers = true
 
 terra test2()
     var a : A           --__init -> a.data = 1

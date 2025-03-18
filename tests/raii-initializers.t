@@ -60,3 +60,50 @@ terra main3()
     end
 end
 test.eq(main3(), true)
+
+
+printtestheader("initialization - tuple and named initialization - counting constructors")
+
+local struct C{
+    x : int
+    y : int
+    z : int
+    p : &int
+}
+
+local function countconstructors(typ)
+    local count = 0
+    for k,v in pairs(typ.constructor) do
+        count = count + 1
+    end
+    return count
+end
+
+terra main4()
+    var c = C{x=1}
+    var d = C{1}
+end
+main4()
+test.eq(countconstructors(C), 1)
+
+C.constructors = {}
+terra main5()
+    var c = C{x=1}
+    var d = C{1}
+    var e = C{x=1, y=2}
+    var f = C{1, 2}
+end
+main5()
+test.eq(countconstructors(C), 2)
+
+C.constructors = {}
+terra main6()
+    var c = C{x=1}              --calling imp-1
+    var d = C{1}                --calling imp-1
+    var e = C{x=1, y=2}         --calling imp-2
+    var f = C{1, 2}             --calling imp-2
+    var g = C{z=1, y=2, x=1}    --calling imp-3
+    var h = C{1, 2, 1}          --calling imp-4
+end
+main6()
+test.eq(countconstructors(C), 4)

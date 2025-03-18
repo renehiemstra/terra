@@ -343,6 +343,47 @@ local function addmissingforward(T)
     end
 end
 
+local function constructor(from, to)
+    assert(from:isstruct(), tostring(from) .. " is not a valid struct.")
+    assert(to:isstruct(), tostring(to) .. " is not a valid struct.")
+    --get layout of structs
+    local from_layout, to_layout = from:getlayout(), to:getlayout()
+    --from here on we use 'T' for 'to' type
+    local T = to
+    --check input
+    assert(#from_layout.entries <= #to_layout.entries, "number of arguments exceeds number of struct entries.")
+    --add 'constructor' table
+    if not T.constructor then T.constructor = {} end
+    --extract symbols for the argument list
+    local argumentlist, keys = terralib.newlist{}, terralib.newlist{}
+    for i,entry in ipairs(from_layout.entries) do
+        argumentlist:insert(symbol(entry.type))
+        local offset = from.convertible == "tuple" and i - 1 or to_layout.keytoindex[entry.key]
+        assert(offset, "structural cast invalid, result structure has no key ".. tostring(entry.key))
+        keys:insert(to_layout.entries[offset+1].key)
+    end
+    --generate a constructor if it has not been generated before
+    local sig = table.concat(keys, "+") --serialize keys to get a unique key
+    if not T.constructor[sig] then
+        local nargs = #argumentlist --number of function arguments
+        addmissinginit(T) --add empty initializer
+        --generate implementation
+        T.constructor[sig] = terra([argumentlist])
+            var v : T --initializer will be auto-generated
+            escape
+                for i=1,nargs do
+                    local key, rhs = keys[i], argumentlist[i]
+                    emit quote
+                        v.[key] = __move__([rhs]) --__move constructor will be used for struct objects
+                    end
+                end
+            end
+            return v
+        end
+    end
+    return T.constructor[sig]
+end
+
 --add definitions such that we can access them from terralib
 terralib.ext = {
     addmissing = {
@@ -354,6 +395,7 @@ terralib.ext = {
         arraydestructor = generatearraydestructor,
         arrayinitializer = generatearrayinitializer
     },
+    constructor = constructor,
     ismanaged = ismanaged,
     hasmanagedfields = hasmanagedfields
 }

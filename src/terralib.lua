@@ -2256,35 +2256,10 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
 
         --take care of (managed and partial) struct initialization
         if terralib.ext and exp:is "constructor" then
-            if (#to.entries > #from.entries) or ((#to.entries == #from.entries) and terralib.ext.hasmanagedfields(typ)) then
-                local stmts = List{}
-                local exprs = List{}
-                local allocvar, var = allocvar(exp, typ,"<structcast>")
-                --allocate struct variable
-                stmts:insert(allocvar)
-                --insert initializer
-                local ini = checkraiiinit(exp, var)
-                if ini then
-                    stmts:insert(ini)
-                end
-                --perform (managed) assignments field by field
-                for i,entry in ipairs(from.entries) do
-                    local offset = exp.type.convertible == "tuple" and i - 1 or to.keytoindex[entry.key]
-                    local myentry = to.entries[offset+1]
-                    local vselected = insertselect(var, myentry.key)
-                    local rselected = exp.expressions[i]
-                    local assignment = createassignment(exp, List{vselected}, List{rselected})
-                    if assignment and assignment:is "letin" and assignment.hasstatements and #assignment.expressions==0 then
-                        stmts:insertall(assignment.statements)
-                    else
-                        stmts:insert(assignment)
-                    end
-                end
-                --return variable inside expression block of letin statement
-                exprs:insert(var)
-                --create letin block and perform new structcast
-                return createlet(exp, stmts, exprs, true)
-            end
+            local f = terralib.ext.constructor(exp.type, typ)
+            local fnlike = asterraexpression(exp, f, "luaobject")
+            local arguments = List {unpack(exp.expressions)}
+            return checkcall(exp, List { fnlike } , arguments, "all", false, "expression")
         end
 
         local valid = true
@@ -4097,11 +4072,11 @@ function terra.includecstring(code,cargs,target)
     	args:insert(path)
     end
     -- Obey the SDKROOT variable on macOS to match Clang behavior.
-    --local sdkroot = os.getenv("SDKROOT")
-    --if sdkroot then
-    --    args:insert("-isysroot")
-    --    args:insert(sdkroot)
-    --end
+    local sdkroot = os.getenv("SDKROOT")
+    if sdkroot then
+        args:insert("-isysroot")
+        args:insert(sdkroot)
+    end
     -- Set GNU C version to match value set by Clang: https://github.com/llvm/llvm-project/blob/f77c948d56b09b839262e258af5c6ad701e5b168/clang/lib/Driver/ToolChains/Clang.cpp#L5750-L5753
     if ffi.os ~= "Windows" and terralib.llvm_version >= 100 then
       args:insert("-fgnuc-version=4.2.1")
