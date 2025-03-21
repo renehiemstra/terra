@@ -118,11 +118,7 @@ terra main7(k : int)
     elseif k == 1 then
         var b = __move__(a) --__move is called --> a.data = 1 and b.data = 3
         return a.data + b.data --> 4
-    elseif k == 2 then
-        var b = __copy__(a) --bitcopy is performed --> a.data = 3 and b.data = 3
-        return a.data + b.data --> 6
     end
 end
 test.eq(main7(0), 7)
 test.eq(main7(1), 4)
-test.eq(main7(2), 6)

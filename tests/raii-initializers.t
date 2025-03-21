@@ -71,6 +71,13 @@ local struct C{
     p : &int
 }
 
+terra C:__dtor()
+    self.x = -1
+    self.y = -1
+    self.z = -1
+    self.p = nil
+end
+
 local function countconstructors(typ)
     local count = 0
     for k,v in pairs(typ.constructor) do

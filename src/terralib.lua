@@ -2250,16 +2250,16 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
 
     local createassignment, checkraiiinit
 
-    function structcast(explicit,exp,typ, speculative)
+    function structcast(explicit,exp,typ,speculative)
         local from = exp.type:getlayout(exp)
         local to = typ:getlayout(exp)
 
         --take care of (managed and partial) struct initialization
-        if terralib.ext and exp:is "constructor" then
+        if terralib.ext and exp:is "constructor" and terralib.ext.ismanaged(typ) then
             local f = terralib.ext.constructor(exp.type, typ)
             local fnlike = asterraexpression(exp, f, "luaobject")
             local arguments = List {unpack(exp.expressions)}
-            return checkcall(exp, List { fnlike } , arguments, "all", false, "expression")
+            return checkcall(exp, List { fnlike } , arguments, "none", false, "expression")
         end
 
         local valid = true
@@ -3018,12 +3018,12 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
 
     --type check raii __copy (copy-assignment) methods. They are generated
     --if they are missing.
-    local function checkraiicopyassignment(anchor, from, to)
+    local function checkraiicopyormoveassignment(anchor, from, to, copyormove)
         if not terralib.ext then return end
         if not validcopyrhs(from) then return end
-        --check for 'from.type.methods.__copy' and 'to.type.methods.__copy' and generate them
-        --if needed
-        if not (ismanaged(from, "__copy") or ismanaged(to, "__copy")) then
+        --check for 'from.type.methods.[copyormove]' and 'to.type.methods.[copyormove]' and 
+        --generate them if needed
+        if not (ismanaged(from, copyormove) or ismanaged(to, copyormove)) then
             --return early in case types are not managed and 
             --resort to regular copy
             return
@@ -3038,8 +3038,8 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
         --list of overloaded __copy metamethods
         local overloads = terra.newlist()
         local function checkoverload(v)
-            if hasraiimethod(v, "__copy") then
-                overloads:insert(asterraexpression(anchor, v.type.methods.__copy, "luaobject"))
+            if hasraiimethod(v, copyormove) then
+                overloads:insert(asterraexpression(anchor, v.type.methods[copyormove], "luaobject"))
             end
         end
         --add overloaded methods based on left- and right-hand-side of the assignment
@@ -3050,33 +3050,16 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
         end
     end
 
+    --type check raii __copy (copy-assignment) methods. They are generated
+    --if they are missing.
+    local function checkraiicopyassignment(anchor, from, to)
+        return checkraiicopyormoveassignment(anchor, from, to, "__copy")
+    end
+
     --type check raii __move (move-assignment) methods. They are generated
     --if they are missing.
     local function checkraiimoveassignment(anchor, from, to)
-        if not terralib.ext then return end
-        --check for 'from.type.methods.__move' and 'to.type.methods.__move' and generate them
-        --if needed
-        if not (ismanaged(from, "__move") or ismanaged(to, "__move")) then
-            --return early in case types are not managed
-            return
-        end
-        --if `to` is an allocvar then set type and turn into corresponding `var`
-        if to:is "allocvar" then
-            to = newobject(anchor,T.var,to.name,to.symbol):setlvalue(true):withtype(from.type or terra.types.error)
-        end
-        --list of overloaded __move metamethods
-        local overloads = terra.newlist()
-        local function checkoverload(v)
-            if hasraiimethod(v, "__move") then
-                overloads:insert(asterraexpression(anchor, v.type.methods.__move, "luaobject"))
-            end
-        end
-        --add overloaded methods based on left- and right-hand-side of the assignment
-        checkoverload(from)
-        checkoverload(to)
-        if #overloads > 0 then
-            return checkcall(anchor, overloads, terralib.newlist{from, to}, "all", true, "expression")
-        end
+        return checkraiicopyormoveassignment(anchor, from, to, "__move")
     end
 
     local function checkmethod(exp, location)
@@ -3095,12 +3078,6 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
             if ismanaged(v, "__move") then
                 v:setassignment("move")
             end
-            return v
-        elseif exp.value.name == "__copy__" then
-            local arguments = checkexpressions(exp.arguments,"luavalue")
-            assert(#arguments == 1, "__copy__ takes only a single argument.")
-            local v = arguments[1]
-            v:setassignment("copy")
             return v
         elseif exp.value.name == "__handle__" then
             local arguments = checkexpressions(exp.arguments,"luavalue")
@@ -3127,6 +3104,7 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
         end
         return checkcall(exp, terra.newlist { fnlike } , arguments, "none", false, location)
     end
+
     function checkcall(anchor, fnlikelist, arguments, castbehavior, allowambiguous, location)
         --arguments are always typed trees, or a lua object
         assert(#fnlikelist > 0)
@@ -3168,38 +3146,32 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
         end
 
         local function createcall(callee, paramlist)
-            local function injectcopyormoveassignment(i, p, checkassignment)
+            local function tryinjectcopyormoveassignment(i, p)
                 local stmts = List()
-                --allocate temporary
                 local lv,l = allocvar(p, p.type, "<tmp>")
-                stmts:insert(lv)
-                --insert __init for temporary
-                local init = checkraiimethodwithreceiver(p, l, "__init")
-                if init then
-                    stmts:insert(init)
-                end
-                --insert __copy or __move for temporary
-                local cp = checkassignment(p, p, l)
-                --only update the parameter if a copy-assignment is implemented
-                --that maps 'from' onto 'to' of the same type. otherwise we perform
-                --a standard bitcopy. maybe we should raise an error here?
+                --only update the parameter if a copy-/move-assignment is implemented
+                --that maps 'from' onto 'to' of the same type.
+                local cp = (p.assignment ~= "move") and checkraiicopyassignment(p, p, l) or checkraiimoveassignment(p, p, l)
                 if cp then
+                    --allocate temporary
+                    stmts:insert(lv)
+                    --insert __init for temporary
+                    local init = checkraiimethodwithreceiver(p, l, "__init")
+                    if init then
+                        stmts:insert(init)
+                    end
+                    --inject copy/move assignment
                     stmts:insert(cp)
                     --reset parameter input as the temporary object that is initialized using
                     --the copy-assignment
                     paramlist[i] = createlet(p, stmts, List{l}, true)
-                else
-                    diag:reporterror(p, "copy-assignment is not implemented for type ", tostring(p.type))
                 end
             end
             --inject copy/move-assignment for all managed variables that are passed by value
-            for i, p in ipairs(paramlist) do
-                if p.assignment == "copy" then
-                    --passthrough - we perform a bitcopy
-                elseif p.assignment == "move" then
-                    injectcopyormoveassignment(i, p, checkraiimoveassignment)
-                elseif ismanaged(p, "__copy") then
-                    injectcopyormoveassignment(i, p, checkraiicopyassignment)
+            --and that are not pased as a `__handle__`
+            for i,p in ipairs(paramlist) do
+                if p.type:isstruct() and validcopyrhs(p) and p.assignment ~= "handle" then
+                    tryinjectcopyormoveassignment(i, p)
                 end
             end
             --create actual call with this parameterlist
@@ -3572,16 +3544,12 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
         local byfcall = {lhs = terralib.newlist(), rhs = terralib.newlist()}
         for i=1,#lhs do
             local to, from = lhs[i], rhs[i]
-            if from.assignment == "copy" then
-                --we perform a bitcopy, which is equal to a regular assignment
-                regular.rhs:insert(from)
-                regular.lhs:insert(to)
-            elseif from.assignment == "handle" then
+            if from.assignment == "handle" then
                 --we return a handle to the object, which does not invoke a __dtor
                 to.symbol:sethandle(true)
                 regular.rhs:insert(from)
                 regular.lhs:insert(to)
-            elseif from.assignment == "move" or checkraiicopyassignment(anchor, from, to) then
+            elseif (from.assignment~="move") and checkraiicopyassignment(anchor, from, to) or checkraiimoveassignment(anchor, from, to) then
                 --add assignment by __copy call
                 byfcall.rhs:insert(from)
                 byfcall.lhs:insert(to)
@@ -3724,32 +3692,20 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
                     stmts:insert(init)
                 end
                 local r = byfcall.rhs[i]
-                if r.assignment == "move" then
-                    local moveassignment = checkraiimoveassignment(anchor, r, v)
-                    if moveassignment then
-                        stmts:insert(moveassignment)
-                    end
-                else
-                    local copyassignment = checkraiicopyassignment(anchor, r, v)
-                    if copyassignment then
-                        stmts:insert(checkraiicopyassignment(anchor, r, v))
-                    end
+                --insert copy-/move-assignment
+                local cp = (r.assignment~="move") and checkraiicopyassignment(anchor, r, v) or checkraiimoveassignment(anchor, r, v)
+                if cp then
+                    stmts:insert(cp)
                 end
             else
                 ensurelvalue(v)
                 --apply copy/move assignment - memory resource management is in the
                 --hands of the programmer
                 local r = byfcall.rhs[i]
-                if r.assignment == "move" then
-                    local moveassignment = checkraiimoveassignment(anchor, r, v)
-                    if moveassignment then
-                        stmts:insert(moveassignment)
-                    end
-                else
-                    local copyassignment = checkraiicopyassignment(anchor, r, v)
-                    if copyassignment then
-                        stmts:insert(checkraiicopyassignment(anchor, r, v))
-                    end
+                --insert copy-/move-assignment
+                local cp = (r.assignment~="move") and checkraiicopyassignment(anchor, r, v) or checkraiimoveassignment(anchor, r, v)
+                if cp then
+                    stmts:insert(cp)
                 end
             end
         end
@@ -4072,11 +4028,11 @@ function terra.includecstring(code,cargs,target)
     	args:insert(path)
     end
     -- Obey the SDKROOT variable on macOS to match Clang behavior.
-    local sdkroot = os.getenv("SDKROOT")
-    if sdkroot then
-        args:insert("-isysroot")
-        args:insert(sdkroot)
-    end
+    --local sdkroot = os.getenv("SDKROOT")
+    --if sdkroot then
+    --    args:insert("-isysroot")
+    --    args:insert(sdkroot)
+    --end
     -- Set GNU C version to match value set by Clang: https://github.com/llvm/llvm-project/blob/f77c948d56b09b839262e258af5c6ad701e5b168/clang/lib/Driver/ToolChains/Clang.cpp#L5750-L5753
     if ffi.os ~= "Windows" and terralib.llvm_version >= 100 then
       args:insert("-fgnuc-version=4.2.1")

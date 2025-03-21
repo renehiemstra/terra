@@ -267,61 +267,96 @@ function addmissingmove(T)
     end
 end
 
+--check if object is a pointer (not a function pointer) or has pointer
+--fields or elements.
+local function haspointers(T)
+    if T:isstruct() then
+        for i,e in ipairs(T:getentries()) do
+            if e.type and haspointers(e.type) then
+                return true
+            end
+        end
+        return false
+    elseif T:isarray() then
+        return haspointers(T.type)
+    elseif T:ispointer() and not T:ispointertofunction() then
+        return true
+    else
+        return false
+    end
+end
+
 --__create a missing __copy for 'T' and all its entries
+--a type T is copyable if all its fields are copyable.
+--a `field` is copyable if:
+--      [1] `field` is a struct and implements a __copy or by induction it is copyable.
+--      [2] `field` is a primitive type or a simd vector which is trivially copyable.
+--      [3] `field` is an array of copyable objects.
+--vice versa, a `field` is not copyable when it is a pointer (not a function pointer) or a struct that does not
+--have a (generated) __copy or an array of objects that are not copyable.
 function addmissingcopy(T)
-    local generated = false
+    local generated = false --flag to check if actual copy-constructors are called
+    local copyable = true  --flag to check if the type T is unambiguously copyable
     local runcopy
     runcopy = macro(function(from, to)
         local V = from:gettype()
         if V:isstruct() then
-            if ismanaged(V) then
-                addmissingcopy(V)
-                --copy will always be generated for a managed variable, so
-                --we do a sanity check 
-                assert(hasmethod(V, "__copy"), "__copy could not be generated.")
+            addmissingcopy(V)
+            if hasmethod(V, "__copy") then
+                generated = true
                 return quote
                     [V.methods.__copy](&from, &to)
                 end
             else
-                return quote
-                    to = from
-                end
+                --bit-copies for unmanaged structs
+                if not ismanaged(V) and not haspointers(V) then
+                    return quote
+                        to = from --perform a bitcopy
+                    end
+                else
+                    --managed structs without (generated) __copy or unmanaged
+                    --structs containing pointers are not copyable
+                    copyable = false
+                    return quote end
+                end                
             end
         elseif V:isarray() then
-            addmissingcopy(V.type)
             return quote
                 for i = 0, V.N do
                     runcopy(from[i], to[i])
                 end
             end
+        elseif V:ispointer() and not V:ispointertofunction() then
+            copyable = false --pointers are not copyable
+            return quote end
         else
             return quote
-                to = from
+                to = from --perform a bitcopy
             end
         end
     end)
     --generate a __copy
-    if T:isstruct() and ismanaged(T) and not T.methods.__copy then
-        if hasmanagedfields(T) then
-            T.methods.__copy_generated = terra(from : &T, to : &T)
-                escape
-                    for i,e in ipairs(T:getentries()) do
-                        if e.field then
-                            emit quote runcopy(from.[e.field], to.[e.field]) end
-                        else
-                            checkuniontypelist(e)
-                            emit quote runcopy(from.[e[1].field], to.[e[1].field]) end
-                        end
+    if T:isstruct() and not T.methods.__copy and not T.__copy_generated then
+        local imp = terra(from : &T, to : &T)
+            escape
+                for i,e in ipairs(T:getentries()) do
+                    if e.field then
+                        emit quote runcopy(from.[e.field], to.[e.field]) end
+                    else
+                        checkuniontypelist(e)
+                        emit quote runcopy(from.[e[1].field], to.[e[1].field]) end
                     end
                 end
             end
-        else
-            --if a managed variable or any of its fields do not implement 
-            --a __copy then we fallback to a __move
-            addmissingmove(T)
-            T.methods.__copy_generated = T.methods.__move
         end
-        T.methods.__copy = T.methods.__copy_generated
+        --flag that `addmissingdtor` already has been called
+        T.__copy_generated = true
+        --if non-trivial and valid copy-assignment code was actually generated then
+        --set assign the implementation to '__copy' and '__copy_generated'
+        if generated and copyable then
+            T.methods.__copy_generated = imp
+            T.methods.__copy = T.methods.__copy_generated
+        end
     end
 end
 

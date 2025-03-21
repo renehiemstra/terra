@@ -40,11 +40,6 @@ A.methods.__copy:adddefinition(terra(from : &A, to : &int)
     @to = from.data
 end)
 
---temporary method such that __copy is not called
-A.methods.__move = terra(self : &A)
-    return @self
-end
-
 printtestheader("raii.t - testing __init metamethod")
 terra testinit()
     var a : A
@@ -99,12 +94,9 @@ terra testcopyassignment2()
 end
 test.eq(testcopyassignment2(), 5)
 
---generate implementation for __move
---terralib.ext.addmissing.__move(A)
-
 printtestheader("raii.t - return from function.")
 terra returnone()
-    var a = A{4}:__move() --call __move to move resources into 'a' (make sure copy constructor is not called)
+    var a = A{4}
     return a
 end
 
@@ -114,11 +106,12 @@ terra testreturnfromfun1()
 end
 test.eq(testreturnfromfun1(), 4)
 
+
 printtestheader("raii.t - return tuple from function.")
 
 terra returntwo()
-    var a = A{4}:__move()   --call __move to move resources into 'a' (make sure copy constructor is not called)
-    var b = A{5}:__move()   --same for 'b'
+    var a = A{4}
+    var b = A{5}
     return a, b
 end
 
