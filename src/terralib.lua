@@ -2937,7 +2937,6 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
                     if dtor then
                         --add deferred calls to the destructors
                         table.insert(stats, pos, newobject(anchor, T.defer, dtor))
-                        pos = pos + 1
                     end
                 end
             end
@@ -2948,7 +2947,8 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
             local queue = env:queue()
             if queue and #queue > 0 then
                 --call destructor in reverse order of object creation
-                for _,name in ipairs(queue) do
+                for k=#queue,1,-1 do
+                    local name = queue[k]
                     local sym = lenv[name]
                     placedestructorcall(name, sym)
                 end
