@@ -182,7 +182,6 @@ terra main3(v : int)
         a.data = a.data + 1
         --defer b:__dtor()
         --defer c:__dtor()
-        --defer a:__dtor()
     end
     --defer a:__dtor()
     return getndestructorcalls()

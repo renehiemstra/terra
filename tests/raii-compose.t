@@ -111,7 +111,7 @@ terra testcopyassignment_C()
     var c_1 : C
     var c_2 : C
     c_1.data_a.data = 5
-    c_2 = c_1
+    c_2 = c_1   -- __copy is called here
     std.io.printf("value c_2._data_a.data %d\n", c_2.data_a.data)
     return c_2.data_a.data
 end

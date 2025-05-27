@@ -13,11 +13,11 @@ local struct A {
     data : int
 }
 
-printtestheader("raii-copy-generation.t - testing __copy generation 1")
+printtestheader("raii-copy-generation.t - testing __copy generation - 1")
 
 terralib.ext.addmissing.__copy(A)
-assert(A.methods.__copy == nil)
-assert(A.__copy_generated == true)
+assert(A.methods.__copy == nil)     -- a __copy method could not be generated
+assert(A.__copy_generated == true)  -- a trait that signals that `terralib.ext.addmissing.__copy`n has been called
 
 terra A.methods.__copy(from : &A, to : &A)
     to.data = from.data + 1
@@ -29,7 +29,7 @@ printtestheader("raii-copy-generation.t - testing __copy generation - 2")
 local sum = {double,double} -> double
 
 local struct B{
-    a : A                     -- implements __copy
+    a : A                   -- implements __copy
     i : int                 -- is trivially copyable
     v : vector(double, 3)   -- is trivially copyable
     f : sum                 -- is trivially copyable
@@ -38,20 +38,20 @@ local struct B{
 }
 
 terralib.ext.addmissing.__copy(B)
-assert(B.__copy_generated == true)
-assert(B.methods.__copy ~= nil)
+assert(B.__copy_generated == true)  -- terralib.ext.addmissing.__copy has been called
+assert(B.methods.__copy ~= nil)     -- a __copy method was generated
 
 printtestheader("raii-copy-generation.t - testing __copy generation - 3")
 
 local struct C{
-    a : A -- implements __copy
-    b : B -- implements generated __copy
-    c : B[2] -- elements implement __copy
+    a : A       -- implements __copy
+    b : B       -- implements generated __copy
+    c : B[2]    -- elements implement __copy
 }
 
 terralib.ext.addmissing.__copy(C)
-assert(C.__copy_generated == true)
-assert(C.methods.__copy ~= nil)
+assert(C.__copy_generated == true)  -- terralib.ext.addmissing.__copy has been called
+assert(C.methods.__copy ~= nil)     -- a __copy method was generated
 
 printtestheader("raii-copy-generation.t - testing __copy generation - 4")
 
@@ -60,12 +60,12 @@ local struct dummy{
 }
 
 local struct D{
-    d : dummy --copyable, but unmanaged. so __copy unnessary
+    d : dummy --copyable, but unmanaged. so __copy unnecessary
 }
 
 terralib.ext.addmissing.__copy(D)
-assert(D.__copy_generated == true)
-assert(D.methods.__copy == nil)
+assert(D.__copy_generated == true)  -- terralib.ext.addmissing.__copy has been called
+assert(D.methods.__copy == nil)     -- but not __copy was generated
 
 printtestheader("raii-copy-generation.t - testing __copy generation - 5")
 
@@ -74,16 +74,16 @@ terra dummy:__dtor() -- now dummy is managed, but not copyable
 end
 
 terralib.ext.addmissing.__copy(dummy)
-assert(dummy.__copy_generated == true)
-assert(dummy.methods.__copy == nil)
+assert(dummy.__copy_generated == true)  -- terralib.ext.addmissing.__copy has been called
+assert(dummy.methods.__copy == nil)     -- but __copy could not be generated
 
 local struct E{
     d : dummy  --not copyable
 }
 
 terralib.ext.addmissing.__copy(E)
-assert(E.__copy_generated == true)
-assert(E.methods.__copy == nil)
+assert(E.__copy_generated == true)  -- terralib.ext.addmissing.__copy has been called
+assert(E.methods.__copy == nil)     -- but __copy could not be generated
 
 printtestheader("raii-copy-generation.t - testing __copy generation - 6")
 
@@ -93,8 +93,8 @@ local struct F{
 }
 
 terralib.ext.addmissing.__copy(F)
-assert(F.__copy_generated == true)
-assert(F.methods.__copy == nil)
+assert(F.__copy_generated == true)  -- terralib.ext.addmissing.__copy has been called
+assert(F.methods.__copy == nil)     -- but __copy could not be generated
 
 printtestheader("raii-copy-generation.t - testing __copy generation - 7")
 

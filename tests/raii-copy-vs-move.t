@@ -22,15 +22,15 @@ terra A:__dtor()
     self.data = -1
 end
 
---passing by value, so copy-assignment is performed on both 'a' and 'b'
+--passing by value, so move-assignment is performed on both 'a' and 'b'
 --increasing 'a.data' and 'b.data' by one
 terra myfun(a : A, b : A)
     return a.data + b.data
 end
 
-printtestheader("raii-move-assignment.t - testing __copy set as default to __move")
+printtestheader("raii-move-assignment.t - testing __move")
 
---__copy is not implemented, so __copy is generated and set as a generated __move
+--__copy is not implemented, so default to __move
 terra main()
     var a : A
     a.data = 2
@@ -102,7 +102,7 @@ local fromusingmove = macro(function(data)
 end)
 
 terra main6()
-    var a = fromusingmove(5) --__copy is called and adds 1
+    var a = fromusingmove(5) --macros act like functions: __copy is not called
     return a.data
 end
 test.eq(main6(), 5)
