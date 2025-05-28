@@ -2818,16 +2818,23 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
     end
 
     --check if raii method is implemented and generates one using `terralibext.t` if it is missing
+    local function ismanagedtype(T, method)
+        if T:isstruct() then
+            terralib.ext.addmissing[method](T)
+            if T.methods[method] then
+                return true
+            end
+        elseif T:isarray() then
+            return ismanagedtype(T.type, method)
+        end
+        return false
+    end
+
+    --check if raii method is implemented and generates one using `terralibext.t` if it is missing
     local function ismanaged(receiver, method)
         if not terralib.ext then return false end
         local typ = receiver.type
-        if typ and typ:isstruct() then
-            terralib.ext.addmissing[method](typ)
-            if typ.methods[method] then
-                return true
-            end
-        end
-        return false
+        return typ~=nil and ismanagedtype(typ, method)
     end
 
     --type check raii method __init or __dtor. __copy is handled separately
@@ -3038,8 +3045,14 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
         --list of overloaded __copy metamethods
         local overloads = terra.newlist()
         local function checkoverload(v)
-            if hasraiimethod(v, copyormove) then
+            local typ = v.type
+            if typ:isstruct() and hasraiimethod(v, copyormove) then
                 overloads:insert(asterraexpression(anchor, v.type.methods[copyormove], "luaobject"))
+            elseif typ:isarray() then
+                local method = terralib.ext.addmissing.arraycopyormove(typ, copyormove)
+                if method then
+                    overloads:insert(asterraexpression(anchor, method, "luaobject"))
+                end
             end
         end
         --add overloaded methods based on left- and right-hand-side of the assignment
@@ -3156,7 +3169,7 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
                     --allocate temporary
                     stmts:insert(lv)
                     --insert __init for temporary
-                    local init = checkraiimethodwithreceiver(p, l, "__init")
+                    local init = checkraiiinit(p, l)
                     if init then
                         stmts:insert(init)
                     end
@@ -3170,7 +3183,8 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
             --inject copy/move-assignment for all managed variables that are passed by value
             --and that are not pased as a `__handle__`
             for i,p in ipairs(paramlist) do
-                if p.type:isstruct() and validcopyrhs(p) and p.assignment ~= "handle" then
+                local typ = p.type
+                if (typ:isstruct() or typ:isarray()) and validcopyrhs(p) and p.assignment ~= "handle" then
                     tryinjectcopyormoveassignment(i, p)
                 end
             end
@@ -3687,7 +3701,7 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
                     v:settype(rhstype)
                 end
                 stmts:insert(v)
-                local init = checkraiimethodwithreceiver(anchor, v, "__init")
+                local init = checkraiiinit(anchor, v)
                 if init then
                     stmts:insert(init)
                 end
