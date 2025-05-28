@@ -116,7 +116,7 @@ generatearrayinitializer = terralib.memoize(function(V)
         if init then
             return terra(array : &V)
                 for i = 0, V.N do
-                    init((@array)[i])
+                    init(&((@array)[i]))
                 end
             end
         end
@@ -189,7 +189,7 @@ generatearraydestructor = terralib.memoize(function(V)
         if dtor then
             return terra(array : &V)
                 for i = 0, V.N do
-                    dtor((@array)[i])
+                    dtor(&((@array)[i]))
                 end
             end
         end
@@ -361,26 +361,32 @@ function addmissingcopy(T)
 end
 
 --generate an array destructor, recursively
-local generatearraycopier
-generatearraycopier = terralib.memoize(function(V)
+local generatearraycopyormove
+addmissing = {
+        __init = addmissinginit,
+        __dtor = addmissingdtor,
+        __copy = addmissingcopy,
+        __move = addmissingmove
+}
+generatearraycopyormove = terralib.memoize(function(V, copyormove)
     assert(V:isarray())
     local T = V.type
     if T:isstruct() then
-        addmissingcopy(T)
-        local copy = T.methods.__copy
-        if copy then
+        addmissing[copyormove](T)
+        local method = T.methods[copyormove]
+        if method then
             return terra(from : &V, to : &V)
                 for i = 0, V.N do
-                    copy(&((@from)[i]), &((@to)[i]))
+                    method(&((@from)[i]), &((@to)[i]))
                 end
             end
         end
     elseif T:isarray() then
-        local copy = generatearraycopier(T)
-        if copy then
+        local method = generatearraycopyormove(T, copyormove)
+        if method then
             return terra(from : &V, to : &V)
                 for i = 0, V.N do
-                    copy(&((@from)[i]), &((@to)[i]))
+                    method(&((@from)[i]), &((@to)[i]))
                 end
             end
         end
@@ -456,7 +462,7 @@ terralib.ext = {
         __forward = addmissingforward,
         arraydestructor = generatearraydestructor,
         arrayinitializer = generatearrayinitializer,
-        arraycopier = generatearraycopier
+        arraycopyormove = generatearraycopyormove
     },
     constructor = constructor,
     ismanaged = ismanaged,
