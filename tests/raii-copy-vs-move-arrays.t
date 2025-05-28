@@ -276,3 +276,32 @@ test.eq(getnmovecalls(), 3)
 test.eq(getncopycalls(), 0)
 test.eq(getninitcalls(), 6)
 test.eq(getndtorcalls(), 6)
+
+
+printtestheader("raii-copyctr.t - index array copy-assignment")
+
+terra test13()
+    ninitcalls, nmovecalls, ncopycalls, ndtorcalls = 0, 0, 0, 0
+    var a : A[3] --initialized to {1,1,1}
+    var b = a[0] --a copy happens here
+    return b.data --1+1=2
+end
+test.eq(test13(), 2)
+test.eq(getnmovecalls(), 0)
+test.eq(getncopycalls(), 1)
+test.eq(getninitcalls(), 4)
+test.eq(getndtorcalls(), 4)
+
+printtestheader("raii-copyctr.t - index array move-assignment")
+
+terra test14()
+    ninitcalls, nmovecalls, ncopycalls, ndtorcalls = 0, 0, 0, 0
+    var a : A[3] --initialized to {1,1,1}
+    var b = __move__(a[0]) --a copy happens here
+    return b.data --1=1
+end
+test.eq(test14(), 1)
+test.eq(getnmovecalls(), 1)
+test.eq(getncopycalls(), 0)
+test.eq(getninitcalls(), 4)
+test.eq(getndtorcalls(), 4)

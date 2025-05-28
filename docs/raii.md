@@ -338,11 +338,9 @@ The following files have been added to the terra testsuite:
 You can have a look there for some common code patterns. Useful, in particular, are the integration tests in 'raii-integration-copy.t' and 'raii-integration-move.t'.
 
 ## ToDo:
-1. Implement `__copy` and `__move` for arrays.
-2. Check that `b[i] = a(j)` works for managed arrays.
-3. Maybe rewrite `__move` using `memcopy` for efficiency.
-4. Track (field) initialization and add compiler-checks
-5. Add field-based initializers directly in struct definition.
+1. Check that `b[i] = a(j)` works for managed arrays.
+2. Track (field) initialization and add compiler-checks
+3. Add field-based initializers directly in struct definition.
 
 ## Current limitations
 * The implementation is not aware of when an actual heap allocation is made and therefore assumes that a managed variable always carries a heap resource. It is up to the programmer to properly initialize pointer variables to nil to avoid calling 'free' on uninitialized pointers.
