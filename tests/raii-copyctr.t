@@ -35,7 +35,14 @@ A.methods.__dtor = terra(self : &A)
     self.data = -1
 end
 
+ncopycalls = global(int)
+
+terra getncopycalls()
+    return ncopycalls
+end
+
 A.methods.__copy = terra(from : &A, to : &A)
+    ncopycalls = ncopycalls + 1
     io.printf("__copy: calling copy assignment {&A, &A} -> {}.\n")
     to.data = from.data + 1
 end
@@ -61,7 +68,7 @@ B.generate_initializers = true
 
 terra test2()
     var a : A           --__init -> a.data = 1
-    var b = B{a}        --__init + copy assignment --> b.data.data = 2
+    var b = B{a}        --__init + copy assignment (for `a`) --> b.data.data = 2
     return b.data.data
 end
 test2:printpretty()
@@ -82,3 +89,29 @@ terra test3()
     return myfun(a, b) --copy-assignment is performed for 'a' and 'b', so myfun returns 4
 end
 test.eq(test3(), 4)
+
+
+printtestheader("raii-copyctr.t - copy-construction for arrays")
+
+terra test4()
+    ncopycalls = 0
+    var a : A[3] --initialized to {1,1,1}
+    var b = a --initialized to {1,1,1} and adds `a`
+    return b[0]+b[1]+b[2] --2+2+2=6
+end
+test.eq(test4(), 6)
+--test that the array copier runs, which means A.methods.__copy is called 3 times
+test.eq(getncopycalls(), 3)
+
+printtestheader("raii-copyctr.t - copy-assignment for arrays")
+
+terra test5()
+    ncopycalls = 0
+    var a : A[3] --initialized to {1,1,1}
+    var b : A[3] --initialized to {1,1,1}
+    b = a --adds a+{1,1,1}
+    return b[0]+b[1]+b[2] --2+2+2=6
+end
+test.eq(test5(), 6)
+--test that the array copier runs, which means A.methods.__copy is called 3 times
+test.eq(getncopycalls(), 3)
