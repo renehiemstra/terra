@@ -360,6 +360,33 @@ function addmissingcopy(T)
     end
 end
 
+--generate an array destructor, recursively
+local generatearraycopier
+generatearraycopier = terralib.memoize(function(V)
+    assert(V:isarray())
+    local T = V.type
+    if T:isstruct() then
+        addmissingcopy(T)
+        local copy = T.methods.__copy
+        if copy then
+            return terra(from : &V, to : &V)
+                for i = 0, V.N do
+                    copy(&((@from)[i]), &((@to)[i]))
+                end
+            end
+        end
+    elseif T:isarray() then
+        local copy = generatearraycopier(T)
+        if copy then
+            return terra(from : &V, to : &V)
+                for i = 0, V.N do
+                    copy(&((@from)[i]), &((@to)[i]))
+                end
+            end
+        end
+    end
+end)
+
 --__forward takes a value by reference and simply forwards it by reference,
 --creating an rvalue
 local function addmissingforward(T)
@@ -428,7 +455,8 @@ terralib.ext = {
         __move = addmissingmove,
         __forward = addmissingforward,
         arraydestructor = generatearraydestructor,
-        arrayinitializer = generatearrayinitializer
+        arrayinitializer = generatearrayinitializer,
+        arraycopier = generatearraycopier
     },
     constructor = constructor,
     ismanaged = ismanaged,
