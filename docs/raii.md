@@ -320,6 +320,8 @@ The following files have been added to the terra testsuite:
 |-------------------------------|-------------------------------------------------------------------------------|
 | raii-compose.t                | Tests composition of RAII objects.                                            |
 | raii-copy-generation.t        | Verifies automatic generation of copy methods in RAII classes.                |
+| raii-copy-vs-move-arrays.t    | Verifies copy and move semantics of RAII-array objects.                       |
+| raii-copy-vs-move.t           | Verifies copy and move semantics of RAII objects.                             |
 | raii-copyctr-cast.t           | Tests casting behavior in RAII copy constructors.                             |
 | raii-copyctr.t                | Validates behavior of explicitly defined RAII copy constructors.              |
 | raii-dtor-generation.t        | Checks automatic generation of destructors for RAII objects.                  |
@@ -329,7 +331,6 @@ The following files have been added to the terra testsuite:
 | raii-integration-copy.t       | Integration tests of RAII classes with focus on value semantics.              |
 | raii-integration-move.t       | Integration tests of RAII classes with focus on move semantics.               |
 | raii-meta.t                   | Tests use of RAII objects in macros.                                          |
-| raii-copy-vs-move.t           | Verifies copy and move semantics of RAII objects.                             |
 | raii-offset_ptr.t             | Tests RAII with offset-based pointer implementations.                         |
 | raii-shared_ptr.t             | Validates RAII with `shared_ptr` for shared resource ownership.               |
 | raii-unique_ptr.t             | Tests RAII with `unique_ptr` for unique resource ownership.                   |
@@ -337,13 +338,16 @@ The following files have been added to the terra testsuite:
 
 You can have a look there for some common code patterns. Useful, in particular, are the integration tests in 'raii-integration-copy.t' and 'raii-integration-move.t'.
 
-## ToDo:
-1. Track (field) initialization and add compiler-checks
-2. Add field-based initializers directly in struct definition.
-
 ## Current limitations
 * The implementation is not aware of when an actual heap allocation is made and therefore assumes that a managed variable always carries a heap resource. It is up to the programmer to properly initialize pointer variables to nil to avoid calling 'free' on uninitialized pointers.
+* Currently, `__init` is used to fully initialize an object, in a copy- and move-construction. This is convenient but not optimal, since some fields will be assigned to twice.
+* Destructors are sometimes called even if the object has been initialized to nil. This is not optimal.
 * Tuple (copy) assignment (regular or using `__copy`) are prohibited by the compiler in case of managed variables. This is done to prevent memory leaks or unwanted deletions in assignments such as
 ```
 a, b = b, a
 ```
+
+## ToDo:
+The following two items will alleviate the first three limitations completely and will provide safety and efficiency.
+1. Track (field) initialization and add compiler-checks
+2. Add field-based initializers directly in struct definition.
