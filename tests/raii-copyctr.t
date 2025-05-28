@@ -97,7 +97,7 @@ terra test4()
     ncopycalls = 0
     var a : A[3] --initialized to {1,1,1}
     var b = a --initialized to {1,1,1} and adds `a`
-    return b[0]+b[1]+b[2] --2+2+2=6
+    return b[0].data+b[1].data+b[2].data --2+2+2=6
 end
 test.eq(test4(), 6)
 --test that the array copier runs, which means A.methods.__copy is called 3 times
@@ -110,7 +110,7 @@ terra test5()
     var a : A[3] --initialized to {1,1,1}
     var b : A[3] --initialized to {1,1,1}
     b = a --adds a+{1,1,1}
-    return b[0]+b[1]+b[2] --2+2+2=6
+    return b[0].data+b[1].data+b[2].data --2+2+2=6
 end
 test.eq(test5(), 6)
 --test that the array copier runs, which means A.methods.__copy is called 3 times
