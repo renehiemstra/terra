@@ -3589,18 +3589,6 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
         return createstatementlist(anchor, List {a1, a2})
     end
 
-
-    local function ismanagedassignment(anchor, from, to)
-        if from.assignment == "handle" then
-            to.symbol:sethandle(true) --we return a handle to the object, which does not invoke a __dtor
-            return false, from, to
-        elseif (from.assignment~="move") and checkraiicopyassignment(anchor, from, to) or checkraiimoveassignment(anchor, from, to) then
-            return true, from, to
-        else
-            return false, from, to
-        end
-    end
-
     local function createregularsingleassignment(anchor, lhs, rhs)
         local rhstype = rhs and rhs.type or terra.types.error
         if lhs:is "setteru" then
