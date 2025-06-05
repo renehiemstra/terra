@@ -3589,6 +3589,88 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
         return createstatementlist(anchor, List {a1, a2})
     end
 
+
+    local function ismanagedassignment(anchor, from, to)
+        if from.assignment == "handle" then
+            to.symbol:sethandle(true) --we return a handle to the object, which does not invoke a __dtor
+            return false, from, to
+        elseif (from.assignment~="move") and checkraiicopyassignment(anchor, from, to) or checkraiimoveassignment(anchor, from, to) then
+            return true, from, to
+        else
+            return false, from, to
+        end
+    end
+
+    local function createregularsingleassignment(anchor, lhs, rhs)
+        local rhstype = rhs and rhs.type or terra.types.error
+        if lhs:is "setteru" then
+            local rv,r = allocvar(lhs, rhstype,"<rhs>")
+            lhs = newobject(lhs,T.setter, rv,lhs.setter(r))
+        elseif lhs:is "allocvar" then
+            lhs:settype(rhstype)
+        else
+            ensurelvalue(lhs)
+        end
+        return lhs, rhs
+    end
+
+    local function createunmanagedsingleassignment(anchor, stmts, lhs, rhs)
+        local rhstype = rhs and rhs.type or terra.types.error
+        if lhs:is "setteru" then
+            local rv,r = allocvar(lhs, rhstype,"<rhs>")
+            lhs = newobject(lhs, T.setter, rv, lhs.setter(r))
+        elseif lhs:is "allocvar" then
+            lhs:settype(rhstype)
+        else
+            ensurelvalue(lhs)
+            --if 'v' is a managed variable then
+            --(1) var tmp = v       --store v in tmp
+            --(2) v = rhs[i]        --perform assignment
+            --(3) tmp:__dtor()      --delete old v
+            --the temporary is necessary because rhs[i] may involve a function of 'v'
+            if ismanaged(lhs, "__dtor") then
+                local tmpa, tmp = allocvar(lhs, lhs.type, "<tmp>")
+                --store v in tmp
+                stmts:insert(newobject(anchor,T.assignment, List{tmpa}, List{lhs}))
+                --call tmp:__dtor()
+                stmts:insert(checkraiimethodwithreceiver(anchor, tmp, "__dtor"))
+            end
+        end
+        return lhs, rhs
+    end
+
+    local function createmanagedsingleassignment(anchor, stmts, lhs, rhs)
+        local rhstype = rhs and rhs.type or terra.types.error
+        if lhs:is "setteru" then
+            local rv,r = allocvar(lhs, rhstype,"<rhs>")
+            local copyassignment = checkraiicopyassignment(anchor, rhs, r)
+            if copyassignment then stmts:insert(copyassignment) end
+            stmts:insert(newobject(lhs, T.setter, rv, lhs.setter(r)))
+        elseif lhs:is "allocvar" then
+            if not lhs.type then
+                lhs:settype(rhstype)
+            end
+            stmts:insert(lhs)
+            local init = checkraiimethodwithreceiver(anchor, lhs, "__init")
+            if init then
+                stmts:insert(init)
+            end
+            --insert copy-/move-assignment
+            local cp = (rhs.assignment~="move") and checkraiicopyassignment(anchor, rhs, lhs) or checkraiimoveassignment(anchor, rhs, lhs)
+            if cp then
+                stmts:insert(cp)
+            end
+        else
+            ensurelvalue(lhs)
+            --apply copy/move assignment - memory resource management is in the
+            --hands of the programmer
+            --insert copy-/move-assignment
+            local cp = (rhs.assignment~="move") and checkraiicopyassignment(anchor, rhs, lhs) or checkraiimoveassignment(anchor, rhs, lhs)
+            if cp then stmts:insert(cp) end
+        end
+        return lhs, rhs
+    end
+
     --create regular assignment - no managed types
     function createregularassignment(anchor,lhs,rhs)
         --special case where a rhs struct is unpacked
@@ -3602,18 +3684,11 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
         local vtypes = lhs:map(function(v) return v.type or "passthrough" end)
         rhs = insertcasts(anchor,vtypes,rhs)
         for i,v in ipairs(lhs) do
-            local rhstype = rhs[i] and rhs[i].type or terra.types.error
-            if v:is "setteru" then
-                local rv,r = allocvar(v,rhstype,"<rhs>")
-                lhs[i] = newobject(v,T.setter, rv,v.setter(r))
-            elseif v:is "allocvar" then
-                v:settype(rhstype)
-            else
-                ensurelvalue(v)
-            end
+            lhs[i], rhs[i] = createregularsingleassignment(anchor, v, rhs[i])
         end
         return newobject(anchor,T.assignment,lhs,rhs)
     end
+
 
     --create unmanaged/managed regular or copy assignments
     local function createmanagedassignment(anchor, lhs, rhs)
@@ -3626,78 +3701,18 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
         --sanity check
         assert(#lhs == #rhs)
         --standard case #lhs == #rhs
-        local stmts, post = terralib.newlist(), terralib.newlist()
+        local stmts = terralib.newlist()
         --first take care of regular assignments
         local regular, byfcall = divideintoregularandmanagedassignment(anchor, lhs, rhs)
         local vtypes = regular.lhs:map(function(v) return v.type or "passthrough" end)
         regular.rhs = insertcasts(anchor, vtypes, regular.rhs)
         --take care of regular assignments of managed variables
         for i,v in ipairs(regular.lhs) do
-            local rhs_i = regular.rhs[i]
-            local rhstype = rhs_i and rhs_i.type or terra.types.error
-            if v:is "setteru" then
-                local rv,r = allocvar(v,rhstype,"<rhs>")
-                regular.lhs[i] = newobject(v,T.setter, rv,v.setter(r))
-            elseif v:is "allocvar" then
-                v:settype(rhstype)
-            else
-                ensurelvalue(v)
-                --if 'v' is a managed variable then
-                --(1) var tmp = v       --store v in tmp
-                --(2) v = rhs[i]        --perform assignment
-                --(3) tmp:__dtor()      --delete old v
-                --the temporary is necessary because rhs[i] may involve a function of 'v'
-                if ismanaged(v, "__dtor") then
-                    --To avoid unwanted deletions we prohibit assignments that may involve something
-                    --like a swap: u,v = v, u.
-                    --for now we prohibit this by limiting assignments to a single one
-                    if #regular.lhs>1 then
-                        diag:reporterror(anchor, "assignments of managed objects is not supported for tuples.")
-                    end
-                    local tmpa, tmp = allocvar(v, v.type,"<tmp>")
-                    --store v in tmp
-                    stmts:insert(newobject(anchor,T.assignment, List{tmpa}, List{v}))
-                    --call tmp:__dtor()
-                    post:insert(checkraiimethodwithreceiver(anchor, tmp, "__dtor"))
-                end
-            end
+            regular.lhs[i], regular.rhs[i] = createunmanagedsingleassignment(anchor, stmts, v, regular.rhs[i])
         end
         --take care of copy assignments using methods.__copy
         for i,v in ipairs(byfcall.lhs) do
-            local rhstype = byfcall.rhs[i] and byfcall.rhs[i].type or terra.types.error
-            if v:is "setteru" then
-                local rv,r = allocvar(v,rhstype,"<rhs>")
-                local copyassignment = checkraiicopyassignment(anchor, byfcall.rhs[i], r)
-                if copyassignment then
-                    stmts:insert(checkraiicopyassignment(anchor, byfcall.rhs[i], r))
-                end
-                stmts:insert(newobject(v,T.setter, rv, v.setter(r)))
-            elseif v:is "allocvar" then
-                if not v.type then
-                    v:settype(rhstype)
-                end
-                stmts:insert(v)
-                local init = checkraiimethodwithreceiver(anchor, v, "__init")
-                if init then
-                    stmts:insert(init)
-                end
-                local r = byfcall.rhs[i]
-                --insert copy-/move-assignment
-                local cp = (r.assignment~="move") and checkraiicopyassignment(anchor, r, v) or checkraiimoveassignment(anchor, r, v)
-                if cp then
-                    stmts:insert(cp)
-                end
-            else
-                ensurelvalue(v)
-                --apply copy/move assignment - memory resource management is in the
-                --hands of the programmer
-                local r = byfcall.rhs[i]
-                --insert copy-/move-assignment
-                local cp = (r.assignment~="move") and checkraiicopyassignment(anchor, r, v) or checkraiimoveassignment(anchor, r, v)
-                if cp then
-                    stmts:insert(cp)
-                end
-            end
+            byfcall.lhs[i], byfcall.rhs[i] = createmanagedsingleassignment(anchor, stmts, v, byfcall.rhs[i])
         end
         if #stmts==0 then
             --standard case, no meta-copy-assignments
@@ -3708,7 +3723,6 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
             if #regular.lhs>0 then
                 stmts:insert(newobject(anchor,T.assignment, regular.lhs, regular.rhs))
             end
-            stmts:insertall(post)
             return createstatementlist(anchor, stmts)
         end
     end
