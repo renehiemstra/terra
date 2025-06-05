@@ -1,5 +1,14 @@
-local addmissinginit, addmissingdtor, addmissingcopy, addmissingmove
+-- terralibext.t enables Terra code generation for terralib without having to 
+-- use asdl. The following methods are generated:
+-- __init :: {&A} -> {}
+-- __dtor :: {&A} -> {}
+-- __copy :: {&A, &A} -> {}
+-- __move :: {&A, &A} -> {}
+-- In addition, (incomplete) named and unnamed constructors are generated
 
+local addmissingdtor, addmissinginit
+
+-- A struct is managed if it implements __dtor
 local function ismanaged(T)
     if T:isstruct() then
         addmissingdtor(T)
@@ -13,6 +22,7 @@ local function ismanaged(T)
     return false
 end
 
+-- Are any fields of the struct managed?
 local function hasmanagedfields(V)
     for i,e in ipairs(V:getentries()) do
         if ismanaged(e.type) then
@@ -22,12 +32,15 @@ local function hasmanagedfields(V)
     return false
 end
 
+--check of a type W that is a struct or an array implements a certain method
 local function hasmethod(W, method)
     if W:isstruct() then return W.methods[method]
     elseif W:isarray() then return hasmethod(W.type, method)
     else return false end
 end
 
+--check if we are dealing with a union field. We do not allow union fields inside a 
+--managed type
 local function checkuniontypelist(t)
     assert(terralib.israwlist(t) and #t > 0, "CompileError: expected a union type.")
     assert(t[1].type, "CompileError: expected a valid type.")
@@ -43,9 +56,33 @@ local function checkuniontypelist(t)
     end
 end
 
---__create a missing __init for 'T' and all its entries
-function addmissinginit(T)
-    local generated = false
+--check if object is a pointer (not a function pointer) or has pointer
+--fields or elements.
+local function haspointers(T)
+    if T:isstruct() then
+        for i,e in ipairs(T:getentries()) do
+            if e.type and haspointers(e.type) then
+                return true
+            end
+        end
+        return false
+    elseif T:isarray() then
+        return haspointers(T.type)
+    elseif T:ispointer() and not T:ispointertofunction() then
+        return true
+    else
+        return false
+    end
+end
+
+
+--------------------------------------------------------------------------------
+------------------- Generate __init, __dtor, __copy, __move --------------------
+--------------------------------------------------------------------------------
+
+--__create a missing __init for struct 'T' and all its entries
+addmissinginit = terralib.memoize(function(T)
+    local generated = false --flag that tracks if non-trivial code has been generated
     local runinit
     runinit = macro(function(receiver)
         local V = receiver:gettype()
@@ -95,37 +132,11 @@ function addmissinginit(T)
             T.methods.__init = T.methods.__init_generated
         end
     end
-end
-
---generate an array initializer, recursively.
-local generatearrayinitializer
-generatearrayinitializer = terralib.memoize(function(V)
-    assert(V:isarray())
-    local T = V.type
-    if T:isstruct() then
-        addmissinginit(T)
-        if T.methods.__init then
-            return terra(array : &V)
-                for i = 0, V.N do
-                    (@array)[i]:__init()
-                end
-            end
-        end
-    elseif T:isarray() then
-        local init = generatearrayinitializer(T)
-        if init then
-            return terra(array : &V)
-                for i = 0, V.N do
-                    init(&((@array)[i]))
-                end
-            end
-        end
-    end
 end)
 
 --__create a missing __dtor for 'T' and all its entries
-function addmissingdtor(T)
-    local generated = false
+addmissingdtor = terralib.memoize(function(T)
+    local generated = false --flag that tracks if non-trivial code has been generated
     local rundtor
     rundtor = macro(function(receiver)
         local V = receiver:gettype()
@@ -168,36 +179,11 @@ function addmissingdtor(T)
             T.methods.__dtor = T.methods.__dtor_generated
         end
     end
-end
-
---generate an array destructor, recursively
-local generatearraydestructor
-generatearraydestructor = terralib.memoize(function(V)
-    assert(V:isarray())
-    local T = V.type
-    if T:isstruct() then
-        addmissingdtor(T)
-        if T.methods.__dtor then
-            return terra(array : &V)
-                for i = 0, V.N do
-                    (@array)[i]:__dtor()
-                end
-            end
-        end
-    elseif T:isarray() then
-        local dtor = generatearraydestructor(T)
-        if dtor then
-            return terra(array : &V)
-                for i = 0, V.N do
-                    dtor(&((@array)[i]))
-                end
-            end
-        end
-    end
 end)
 
 --create a missing __move for 'T' and all its entries
-function addmissingmove(T)
+local addmissingmove
+addmissingmove = terralib.memoize(function(T)
     --macro for moveing data
     local runmove
     runmove = macro(function(from, to)
@@ -265,26 +251,8 @@ function addmissingmove(T)
         --attempt to generate 'T.methods.__move' twice
         T.methods.__move = T.methods.__move_generated
     end
-end
+end)
 
---check if object is a pointer (not a function pointer) or has pointer
---fields or elements.
-local function haspointers(T)
-    if T:isstruct() then
-        for i,e in ipairs(T:getentries()) do
-            if e.type and haspointers(e.type) then
-                return true
-            end
-        end
-        return false
-    elseif T:isarray() then
-        return haspointers(T.type)
-    elseif T:ispointer() and not T:ispointertofunction() then
-        return true
-    else
-        return false
-    end
-end
 
 --__create a missing __copy for 'T' and all its entries
 --a type T is copyable if all its fields are copyable.
@@ -292,9 +260,10 @@ end
 --      [1] `field` is a struct and implements a __copy or by induction it is copyable.
 --      [2] `field` is a primitive type or a simd vector which is trivially copyable.
 --      [3] `field` is an array of copyable objects.
---vice versa, a `field` is not copyable when it is a pointer (not a function pointer) or a struct that does not
+--vice versa, a `field` is not copyable when it is a pointer or a struct that does not
 --have a (generated) __copy or an array of objects that are not copyable.
-function addmissingcopy(T)
+local addmissingcopy
+addmissingcopy = terralib.memoize(function(T)
     local generated = false --flag to check if actual copy-constructors are called
     local copyable = true  --flag to check if the type T is unambiguously copyable
     local runcopy
@@ -358,60 +327,14 @@ function addmissingcopy(T)
             T.methods.__copy = T.methods.__copy_generated
         end
     end
-end
-
---generate an array destructor, recursively
-local generatearraycopyormove
-addmissing = {
-        __init = addmissinginit,
-        __dtor = addmissingdtor,
-        __copy = addmissingcopy,
-        __move = addmissingmove
-}
-generatearraycopyormove = terralib.memoize(function(V, copyormove)
-    assert(V:isarray())
-    local T = V.type
-    if T:isstruct() then
-        addmissing[copyormove](T)
-        local method = T.methods[copyormove]
-        if method then
-            return terra(from : &V, to : &V)
-                for i = 0, V.N do
-                    method(&((@from)[i]), &((@to)[i]))
-                end
-            end
-        end
-    elseif T:isarray() then
-        local method = generatearraycopyormove(T, copyormove)
-        if method then
-            return terra(from : &V, to : &V)
-                for i = 0, V.N do
-                    method(&((@from)[i]), &((@to)[i]))
-                end
-            end
-        end
-    end
 end)
 
---__forward takes a value by reference and simply forwards it by reference,
---creating an rvalue
-local function addmissingforward(T)
-    if T:isstruct() then
-        if T.methods.__forward then
-            T.methods.__forward_generated = T.methods.__forward
-            return
-        end
-        if not T.methods.__forward and not T.methods.__forward_generated then
-            T.methods.__forward_generated = terra(self : &T)
-                return self --simply forward the variable (turning it into an rvalue)
-            end
-            T.methods.__forward = T.methods.__forward_generated
-            return
-        end
-    end
-end
 
-local function constructor(from, to)
+--------------------------------------------------------------------------------
+----------------------------- Generate constructors ----------------------------
+--------------------------------------------------------------------------------
+
+local constructor = terralib.memoize(function(from, to)
     assert(from:isstruct(), tostring(from) .. " is not a valid struct.")
     assert(to:isstruct(), tostring(to) .. " is not a valid struct.")
     --get layout of structs
@@ -450,7 +373,11 @@ local function constructor(from, to)
         end
     end
     return T.constructor[sig]
-end
+end)
+
+--------------------------------------------------------------------------------
+------------------------- Add methods to terralib ------------------------------
+--------------------------------------------------------------------------------
 
 --add definitions such that we can access them from terralib
 terralib.ext = {
@@ -459,12 +386,47 @@ terralib.ext = {
         __dtor = addmissingdtor,
         __copy = addmissingcopy,
         __move = addmissingmove,
-        __forward = addmissingforward,
-        arraydestructor = generatearraydestructor,
-        arrayinitializer = generatearrayinitializer,
-        arraycopyormove = generatearraycopyormove
+        constructor = constructor
     },
-    constructor = constructor,
     ismanaged = ismanaged,
     hasmanagedfields = hasmanagedfields
 }
+
+--------------------------------------------------------------------------------
+------------------------- Generate Array methods -------------------------------
+--------------------------------------------------------------------------------
+
+local generate_array_method_implementation = function(V, method)
+    if terralib.isfunction(method) then
+        local nargs = #method.type.parameters
+        if nargs == 1 then
+            return terra(array : &V)
+                for i = 0, V.N do
+                    method(&((@array)[i]))
+                end
+            end
+        elseif nargs==2 then
+            return terra(source : &V, receiver : &V)
+                for i = 0, V.N do
+                    method(&((@source)[i]), &((@receiver)[i]))
+                end
+            end
+        end
+    end
+end
+
+--generate an array initializer or destructor, recursively.
+local generatearraymethod
+generatearraymethod = terralib.memoize(function(V, method)
+    assert(V:isarray())
+    local T = V.type
+    if T:isstruct() then
+        terralib.ext.addmissing[method](T)
+        return generate_array_method_implementation(V, T.methods[method])
+    elseif T:isarray() then
+        return generate_array_method_implementation(V, generatearraymethod(T, method))
+    end
+end)
+
+--add to addmissing exported methods
+terralib.ext.addmissing.arraymethod = generatearraymethod

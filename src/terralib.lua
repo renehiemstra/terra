@@ -2247,8 +2247,7 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
         local v = newobject(anchor,T.var,name,av.symbol):setlvalue(true):withtype(typ)
         return av,v
     end
-
-    local createassignment, checkraiiinit
+    local createassignment
 
     function structcast(explicit,exp,typ,speculative)
         local from = exp.type:getlayout(exp)
@@ -2256,7 +2255,7 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
 
         --take care of (managed and partial) struct initialization
         if terralib.ext and exp:is "constructor" and terralib.ext.ismanaged(typ) then
-            local f = terralib.ext.constructor(exp.type, typ)
+            local f = terralib.ext.addmissing.constructor(exp.type, typ)
             local fnlike = asterraexpression(exp, f, "luaobject")
             local arguments = List {unpack(exp.expressions)}
             return checkcall(exp, List { fnlike } , arguments, "none", false, "expression")
@@ -2839,26 +2838,17 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
 
     --type check raii method __init or __dtor. __copy is handled separately
     --methods are generated if they are missing
-    local function checkraiimethodwithreceiver(anchor, reciever, method)
+    local function checkraiimethodwithreceiver(anchor, receiver, method)
         if not terralib.ext then return end
-        if ismanaged(reciever, method) then
-            if reciever:is "allocvar" then
-                reciever = newobject(anchor,T.var,reciever.name,reciever.symbol):setlvalue(true):withtype(reciever.type)
-            end
-            return checkmethodwithreciever(anchor, false, method, reciever, terralib.newlist(), "statement")
-        end
-    end
-
-    function checkraiiinit(anchor, receiver)
         local typ = receiver.type
-        if typ:isstruct() or typ:isarray() then
+        if ismanagedtype(typ, method) then
             if receiver:is "allocvar" then
-                receiver = newobject(anchor,T.var,receiver.name,receiver.symbol):setlvalue(true):withtype(receiver.type)
+                receiver = newobject(anchor,T.var,receiver.name,receiver.symbol):setlvalue(true):withtype(typ)
             end
             if typ:isstruct() then
-                return checkraiimethodwithreceiver(anchor, receiver, "__init")
+                return checkmethodwithreciever(anchor, false, method, receiver, terralib.newlist(), "statement")
             elseif typ:isarray() then
-                local init = terralib.ext.addmissing.arrayinitializer(typ)
+                local init = terralib.ext.addmissing.arraymethod(typ, method)
                 if init then
                     local f = asterraexpression(anchor, init, "luaobject")
                     return checkcall(anchor, List{f}, List{receiver}, "all", true, "expression")
@@ -2872,26 +2862,12 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
         if not terralib.ext then return end
         local stmts = terralib.newlist()
         for i,e in ipairs(lhs) do
-            local init = checkraiiinit(anchor, e)
+            local init = checkraiimethodwithreceiver(anchor, e, "__init")
             if init then
                 stmts:insert(init)
             end
         end
         return stmts
-    end
-
-    local function checkraiidtor(anchor, receiver)
-        local typ = receiver.type
-        assert(receiver:is "var") --sanity check
-        if typ:isstruct() then
-            return checkraiimethodwithreceiver(anchor, receiver, "__dtor")
-        elseif typ:isarray() then
-            local dtor = terralib.ext.addmissing.arraydestructor(typ)
-            if dtor then
-                local f = asterraexpression(anchor, dtor, "luaobject")
-                return checkcall(anchor, List{f}, List{receiver}, "all", true, "expression")
-            end
-        end
     end
 
     --generate and typecheck raii __dtor's for use in `block` (scope) statement
@@ -2940,7 +2916,7 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
                 local typ = sym.type
                 if typ:isstruct() or typ:isarray() then
                     local receiver = newobject(anchor, T.var, name, sym):setlvalue(true):withtype(typ)
-                    local dtor = checkraiidtor(anchor, receiver)
+                    local dtor = checkraiimethodwithreceiver(anchor, receiver, "__dtor")
                     if dtor then
                         --add deferred calls to the destructors
                         table.insert(stats, pos, newobject(anchor, T.defer, dtor))
@@ -3049,7 +3025,7 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
             if typ:isstruct() and hasraiimethod(v, copyormove) then
                 overloads:insert(asterraexpression(anchor, v.type.methods[copyormove], "luaobject"))
             elseif typ:isarray() then
-                local method = terralib.ext.addmissing.arraycopyormove(typ, copyormove)
+                local method = terralib.ext.addmissing.arraymethod(typ, copyormove)
                 if method then
                     overloads:insert(asterraexpression(anchor, method, "luaobject"))
                 end
@@ -3169,7 +3145,7 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
                     --allocate temporary
                     stmts:insert(lv)
                     --insert __init for temporary
-                    local init = checkraiiinit(p, l)
+                    local init = checkraiimethodwithreceiver(p, l, "__init")
                     if init then
                         stmts:insert(init)
                     end
@@ -3701,7 +3677,7 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
                     v:settype(rhstype)
                 end
                 stmts:insert(v)
-                local init = checkraiiinit(anchor, v)
+                local init = checkraiimethodwithreceiver(anchor, v, "__init")
                 if init then
                     stmts:insert(init)
                 end
@@ -4041,12 +4017,12 @@ function terra.includecstring(code,cargs,target)
     	args:insert("-internal-isystem")
     	args:insert(path)
     end
-    -- Obey the SDKROOT variable on macOS to match Clang behavior.
-    local sdkroot = os.getenv("SDKROOT")
-    if sdkroot then
-       args:insert("-isysroot")
-       args:insert(sdkroot)
-    end
+    -- -- Obey the SDKROOT variable on macOS to match Clang behavior.
+    -- local sdkroot = os.getenv("SDKROOT")
+    -- if sdkroot then
+    --    args:insert("-isysroot")
+    --    args:insert(sdkroot)
+    -- end
     -- Set GNU C version to match value set by Clang: https://github.com/llvm/llvm-project/blob/f77c948d56b09b839262e258af5c6ad701e5b168/clang/lib/Driver/ToolChains/Clang.cpp#L5750-L5753
     if ffi.os ~= "Windows" and terralib.llvm_version >= 100 then
       args:insert("-fgnuc-version=4.2.1")
