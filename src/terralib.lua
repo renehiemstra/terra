@@ -3613,15 +3613,15 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
             ensurelvalue(lhs)
             --if 'v' is a managed variable then
             --(1) var tmp = v       --store v in tmp
-            --(2) v = rhs[i]        --perform assignment
-            --(3) tmp:__dtor()      --delete old v
+            --(2) v = rhs[i]        --perform assignment (will be done by the callee)
+            --(3) tmp:__dtor()      --delete old v (will be a defered call)
             --the temporary is necessary because rhs[i] may involve a function of 'v'
             if ismanaged(lhs, "__dtor") then
                 local tmpa, tmp = allocvar(lhs, lhs.type, "<tmp>")
                 --store v in tmp
                 stmts:insert(newobject(anchor,T.assignment, List{tmpa}, List{lhs}))
-                --call tmp:__dtor()
-                stmts:insert(checkraiimethodwithreceiver(anchor, tmp, "__dtor"))
+                --add defered destructor call - tmp:__dtor()
+                stmts:insert(newobject(anchor, T.defer, checkraiimethodwithreceiver(anchor, tmp, "__dtor")))
             end
         end
         return lhs, rhs
@@ -3689,7 +3689,7 @@ function typecheck(topexp,luaenv,simultaneousdefinitions)
         --sanity check
         assert(#lhs == #rhs)
         --standard case #lhs == #rhs
-        local stmts = terralib.newlist()
+        local stmts, post = terralib.newlist(), terralib.newlist()
         --first take care of regular assignments
         local regular, byfcall = divideintoregularandmanagedassignment(anchor, lhs, rhs)
         local vtypes = regular.lhs:map(function(v) return v.type or "passthrough" end)
