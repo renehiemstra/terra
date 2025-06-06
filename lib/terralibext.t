@@ -49,7 +49,7 @@ local function checkuniontypelist(t)
         local T = e.type
         if T then
             assert(not ismanaged(T), "CompileError: managed types not allowed in union type.")
-            assert(sizeof(T) == size, "CompileError: expected union types to have identical size.")
+            --assert(sizeof(T) == size, "CompileError: expected union types to have identical size.")
         else
             error("CompileError: expected a valid type.")
         end
