@@ -16,12 +16,6 @@ S.error = macro(function(expr, msg)
     return quote
         terralib.debuginfo(filename, linenumber)
         C.printf("%s: %s\n", loc, msg)
-        escape
-            --traceback currently does not work on macos
-            if ffi.os == "Linux" then
-                emit quote terralib.traceback(nil) end
-            end
-        end
         C.abort()
     end
 end)
