@@ -344,6 +344,7 @@ You can have a look there for some common code patterns. Useful, in particular, 
 * Destructors are called in reverse order of object definition, a 'var x : A' or 'var x = ...' statement. 
 * Currently, `__init` is used to fully initialize an object, in a copy- and move-construction. This is convenient but not optimal, since some fields will be assigned to twice.
 * Destructors are sometimes called even if the object has been initialized to nil. This is not optimal.
+* The address of an object may change between `__init` and `__dtor`, as passing arguments by-value still follows C-semantics. Assume that an object may change address without `__move` or another metamethod being called. This mainly affects classes depending on the address of an object, a common example being `boost::offset_ptr` or objects that use the address as identity
 * Tuple (copy) assignment (regular or using `__copy`) are prohibited by the compiler in case of managed variables. This is done to prevent memory leaks or unwanted deletions in assignments such as
 ```
 a, b = b, a
