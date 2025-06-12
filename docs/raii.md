@@ -44,7 +44,7 @@ Compiler support is provided for the following methods:
 | `__move__`                                     | Prefer `__move` over `__copy` for efficient resource transfer.               |
 | `__handle__`                                   | Get a handle to a managed object without transferring ownership. Performs an allocation.             |
 
-These methods facilitate the implementation of smart containers and pointers, such as `std::string`, `std::vector` and `std::unique_ptr`, `std::shared_ptr`, `boost:offset_ptr` in C++.
+These methods facilitate the implementation of smart containers and pointers, such as `std::string`, `std::vector` and `std::unique_ptr`, `std::shared_ptr` in C++.
 
 #### Managed types
 A struct is managed if it implements `__dtor`. Managed types require explicit resource cleanup (e.g., freeing heap memory). Without `__dtor`, a type behaves as a regular stack-allocated object with no special management.
@@ -331,7 +331,6 @@ The following files have been added to the terra testsuite:
 | raii-integration-copy.t       | Integration tests of RAII classes with focus on value semantics.              |
 | raii-integration-move.t       | Integration tests of RAII classes with focus on move semantics.               |
 | raii-meta.t                   | Tests use of RAII objects in macros.                                          |
-| raii-offset_ptr.t             | Tests RAII with offset-based pointer implementations.                         |
 | raii-shared_ptr.t             | Validates RAII with `shared_ptr` for shared resource ownership.               |
 | raii-unique_ptr.t             | Tests RAII with `unique_ptr` for unique resource ownership.                   |
 | raii.t                        | General tests for core RAII principles and functionality.                     |
